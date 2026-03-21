@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ⚽ FotMatch — Futsal Team Finder & Booking Platform
 
 A complete frontend React application for finding futsal teams, sending challenges, booking courts, and managing venues — with three user roles and a full dashboard for each.
@@ -118,3 +119,7 @@ fotmatch/
 - Futsal Partners — venue cards with approval workflow + add partner form
 - Reports — bar charts + tabbed log viewer (activity/bookings/users)
 - System Status — live latency simulation, health bars, incident history
+=======
+# my-project
+fotmatch
+>>>>>>> 75626d80e8c65a9be7fcdfab16c460ee07ccf0d1
