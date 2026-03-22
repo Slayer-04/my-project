@@ -2,8 +2,20 @@ import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
 
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+
 const DEMO = {
-  team:  { name:'Alex Rivera',  email:'team@fotmatch.com',  role:'team'  },
+  team:  {
+    name:'Alex Rivera',
+    email:'team@fotmatch.com',
+    role:'team',
+    teamProfileCompleted:true,
+    teamInfo:{
+      name:'Green Eagles',
+      location:'Lazimpat, Kathmandu',
+      skill:'Intermediate',
+    },
+  },
   owner: { name:'Bikash Rai',   email:'owner@fotmatch.com', role:'owner' },
   admin: { name:'Super Admin',  email:'admin@fotmatch.com', role:'admin' },
 }
@@ -23,10 +35,58 @@ export default function Login() {
     }, 500)
   }
 
-  const submit = e => {
+  const submit = async e => {
     e.preventDefault(); setErr('')
     if (!f.email || !f.password) return setErr('Please fill in all fields.')
-    go(f.role)
+
+    if (f.role !== 'team') {
+      setLoading(true)
+      setTimeout(() => {
+        setUser(DEMO[f.role])
+        navigate({ owner:'/owner', admin:'/admin' }[f.role])
+      }, 500)
+      return
+    }
+
+    const normalizedEmail = f.email.trim().toLowerCase()
+    if (normalizedEmail === DEMO.team.email) {
+      setLoading(true)
+      setTimeout(() => {
+        setUser(DEMO.team)
+        navigate('/team')
+      }, 500)
+      return
+    }
+
+    setLoading(true)
+    try {
+      const response = await fetch(`${API_BASE}/teams/email/${encodeURIComponent(normalizedEmail)}`)
+      const data = await response.json()
+
+      if (!response.ok) {
+        setErr(data.message || 'Team account not found. Please register first.')
+        return
+      }
+
+      setUser({
+        id: data._id,
+        name: data.captainName,
+        email: data.email,
+        role: 'team',
+        teamProfileCompleted: data.teamProfileCompleted,
+        teamInfo: {
+          name: data.teamName || '',
+          location: data.location || '',
+          skill: data.skill || 'Intermediate',
+        },
+      })
+
+      navigate(data.teamProfileCompleted ? '/team' : '/team/profile')
+    } catch (_error) {
+      setErr('Unable to connect to server. Please try again.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (

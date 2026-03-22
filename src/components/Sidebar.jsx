@@ -6,7 +6,6 @@ const NAV = {
   team: [
     { label:'Home',        icon:'fa-house',          path:'/team' },
     { label:'Find Match',  icon:'fa-bolt',           path:'/team/find-match' },
-    { label:'Challenges',  icon:'fa-flag',           path:'/team/challenges' },
     { label:'Book Futsal', icon:'fa-calendar-check', path:'/team/book-futsal' },
     { label:'Profile',     icon:'fa-user',           path:'/team/profile' },
   ],

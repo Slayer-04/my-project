@@ -8,7 +8,6 @@ import Register from './pages/auth/Register.jsx'
 /* ── Team User ─────────────────────────── */
 import TeamDashboard from './pages/team/TeamDashboard.jsx'
 import FindMatch     from './pages/team/FindMatch.jsx'
-import Challenges    from './pages/team/Challenges.jsx'
 import BookFutsal    from './pages/team/BookFutsal.jsx'
 import TeamProfile   from './pages/team/TeamProfile.jsx'
 
@@ -36,6 +35,14 @@ function Guard({ role, children }) {
   return children
 }
 
+function TeamProfileGuard({ children }) {
+  const { user } = useAuth()
+  if (!user) return <Navigate to="/login" replace />
+  if (user.role !== 'team') return <Navigate to="/login" replace />
+  if (!user.teamProfileCompleted) return <Navigate to="/team/profile" replace />
+  return children
+}
+
 export default function App() {
   const [user, setUser] = useState(null)
 
@@ -46,12 +53,12 @@ export default function App() {
           <Route path="/"        element={<Navigate to="/login" replace />} />
           <Route path="/login"   element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/signup"  element={<Navigate to="/register" replace />} />
 
           {/* Team */}
           <Route path="/team"             element={<Guard role="team"><TeamDashboard /></Guard>} />
-          <Route path="/team/find-match"  element={<Guard role="team"><FindMatch /></Guard>} />
-          <Route path="/team/challenges"  element={<Guard role="team"><Challenges /></Guard>} />
-          <Route path="/team/book-futsal" element={<Guard role="team"><BookFutsal /></Guard>} />
+          <Route path="/team/find-match"  element={<TeamProfileGuard><FindMatch /></TeamProfileGuard>} />
+          <Route path="/team/book-futsal" element={<TeamProfileGuard><BookFutsal /></TeamProfileGuard>} />
           <Route path="/team/profile"     element={<Guard role="team"><TeamProfile /></Guard>} />
 
           {/* Owner */}
@@ -66,6 +73,8 @@ export default function App() {
           <Route path="/admin/futsals" element={<Guard role="admin"><Futsals /></Guard>} />
           <Route path="/admin/reports" element={<Guard role="admin"><Reports /></Guard>} />
           <Route path="/admin/system"  element={<Guard role="admin"><SystemStatus /></Guard>} />
+
+          <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthContext.Provider>

@@ -184,7 +184,7 @@ export default function FindMatch() {
     const opponentElo = opponent.elo
     const eloDiff = Math.abs((opponentElo || MY_TEAM.elo) - MY_TEAM.elo)
     if (eloDiff > 320) {
-      return { allow:false, message:`⛔ Request blocked: ELO gap is ${eloDiff}. Please use Challenges for manual requests.` }
+      return { allow:false, message:`⛔ Request blocked: ELO gap is ${eloDiff}. Please use manual match request.` }
     }
 
     const distanceKm = getDistanceKm(opponent.location)
@@ -210,7 +210,7 @@ export default function FindMatch() {
 
   const acceptRequest = (postId) => {
     setPosts(prev => prev.map(p => p.id===postId ? {...p, requestedBy: null, accepted: true} : p))
-    toast$('✅ Match accepted! Check Challenges for details.')
+    toast$('✅ Match accepted! Check match details in your board.')
   }
 
   const sendRequest = (post) => {
@@ -231,7 +231,7 @@ export default function FindMatch() {
     toast$('Post removed.', 'info')
   }
 
-  const hitTeam = team => toast$(`Use Challenges to manually challenge ${team.name}.`, 'info')
+  const hitTeam = team => toast$(`Send a manual match request to ${team.name}.`, 'info')
 
   return (
     <div className="app-shell">
@@ -300,7 +300,7 @@ export default function FindMatch() {
                           ))}
                         </div>
                         <button className="btn btn-outline btn-full" onClick={() => hitTeam(team)}>
-                          <i className="fas fa-flag-checkered" /> Challenge via Challenges
+                          <i className="fas fa-flag-checkered" /> Request Match
                         </button>
                       </div>
                     </div>
@@ -338,7 +338,7 @@ export default function FindMatch() {
                         <span className={`badge badge-${team.tierType}`}>{team.tier}</span>
                       </div>
                       <button className="btn btn-outline btn-full" onClick={() => hitTeam(team)}>
-                        <i className="fas fa-flag-checkered" /> Challenge via Challenges
+                        <i className="fas fa-flag-checkered" /> Request Match
                       </button>
                     </div>
                   </div>

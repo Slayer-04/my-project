@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
 import { useAuth } from '../../App.jsx'
-import { bookings, matchHistory, challenges } from '../../data/mockData.js'
+import { bookings, matchHistory } from '../../data/mockData.js'
 
 export default function TeamDashboard() {
   const { user } = useAuth()
@@ -97,38 +97,6 @@ export default function TeamDashboard() {
                   </div>
                 ))}
               </div>
-            </div>
-          </div>
-
-          {/* Challenges */}
-          <div className="card anim-4" style={{ marginTop:22 }}>
-            <div className="card-hd">
-              <h3>Active Challenges</h3>
-              <button className="btn btn-outline btn-sm" onClick={() => navigate('/team/challenges')}>
-                See All <i className="fas fa-arrow-right" />
-              </button>
-            </div>
-            <div>
-              {challenges.map(c => (
-                <div key={c.id} style={{ padding:'13px 22px', borderBottom:'1px solid #f0f4f8', display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:8 }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-                    <div style={{ width:36, height:36, borderRadius:10, background: c.status==='accepted'?'#e6faf2':'#f4f4f4', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 }}>
-                      {c.status==='accepted'?'✅': c.status==='declined'?'❌':'⏳'}
-                    </div>
-                    <div>
-                      <div style={{ fontWeight:700, fontSize:14 }}>
-                        <span style={{ color:'var(--green)' }}>{c.from}</span>
-                        <span style={{ color:'#a0aec0', margin:'0 6px', fontWeight:400 }}>vs</span>
-                        <span>{c.to}</span>
-                      </div>
-                      <div style={{ fontSize:12, color:'#4a5568', marginTop:2 }}>{c.date} · {c.time} — {c.venue}</div>
-                    </div>
-                  </div>
-                  <span className={`badge badge-${c.status==='accepted'?'success':c.status==='declined'?'danger':'warning'}`}>
-                    {c.status}
-                  </span>
-                </div>
-              ))}
             </div>
           </div>
 

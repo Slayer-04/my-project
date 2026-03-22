@@ -2,6 +2,8 @@ import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
 
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+
 export default function Register() {
   const { setUser } = useAuth()
   const navigate    = useNavigate()
@@ -9,16 +11,54 @@ export default function Register() {
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const submit = e => {
+  const submit = async e => {
     e.preventDefault(); setErr('')
     if (!f.name || !f.email || !f.password || !f.confirm) return setErr('All fields are required.')
     if (f.password !== f.confirm) return setErr('Passwords do not match.')
     if (f.password.length < 6) return setErr('Password must be at least 6 characters.')
+
     setLoading(true)
-    setTimeout(() => {
-      setUser({ name:f.name, email:f.email, role:f.role })
-      navigate(f.role === 'team' ? '/team' : '/owner')
-    }, 800)
+    try {
+      if (f.role === 'team') {
+        const response = await fetch(`${API_BASE}/teams/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ captainName: f.name, email: f.email }),
+        })
+
+        const data = await response.json()
+        if (!response.ok) {
+          setErr(data.message || 'Failed to create team account.')
+          return
+        }
+
+        setUser({
+          id: data.team._id,
+          name: data.team.captainName,
+          email: data.team.email,
+          role: 'team',
+          teamProfileCompleted: data.team.teamProfileCompleted,
+          teamInfo: {
+            name: data.team.teamName || '',
+            location: data.team.location || '',
+            skill: data.team.skill || 'Intermediate',
+          },
+        })
+        navigate('/team')
+        return
+      }
+
+      setUser({
+        name: f.name,
+        email: f.email,
+        role: f.role,
+      })
+      navigate('/owner')
+    } catch (_error) {
+      setErr('Unable to connect to server. Please try again.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
