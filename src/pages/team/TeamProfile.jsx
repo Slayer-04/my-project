@@ -3,18 +3,27 @@ import { useNavigate } from 'react-router-dom'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
 import { useAuth } from '../../App.jsx'
-import { matchHistory } from '../../data/mockData.js'
 
 const LocationPicker = lazy(() => import('../../components/LocationPicker.jsx'))
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 
 export default function TeamProfile() {
-  const { user, setUser } = useAuth()
+  const { user, setUser, matchResults } = useAuth()
   const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
+  const dayOptions = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+  const timeOptions = ['06:00 AM', '07:00 AM', '08:00 AM', '10:00 AM', '12:00 PM', '02:00 PM', '04:00 PM', '06:00 PM', '08:00 PM']
   const [info, setInfo] = useState(
-    user?.teamInfo || { name:'', location:'', skill:'Intermediate', lat: 27.7172, lng: 85.3240 }
+    user?.teamInfo || {
+      name:'',
+      location:'',
+      skill:'Intermediate',
+      preferredDay:'Saturday',
+      preferredTime:'06:00 PM',
+      lat: 27.7172,
+      lng: 85.3240,
+    }
   )
   const [toast, setToast] = useState('')
   const [locationVerified, setLocationVerified] = useState(false)
@@ -27,12 +36,67 @@ export default function TeamProfile() {
     Advanced: 1400,
   }
 
-  const wins   = matchHistory.filter(m => m.result==='win').length
-  const losses = matchHistory.filter(m => m.result==='loss').length
-  const draws  = matchHistory.filter(m => m.result==='draw').length
+  const myTeamName = info.name || user?.teamInfo?.name || user?.teamName || 'My Team'
+
+  const parseTimeToMinutes = (timeStr) => {
+    if (!timeStr) return 0
+    const is12Hour = /AM|PM/i.test(timeStr)
+    if (!is12Hour) {
+      const [h, m] = timeStr.split(':').map(Number)
+      return h * 60 + m
+    }
+    const parts = timeStr.trim().split(' ')
+    const [h, m] = parts[0].split(':').map(Number)
+    const meridiem = parts[1]?.toUpperCase()
+    let hour = h
+    if (meridiem === 'PM' && hour !== 12) hour += 12
+    if (meridiem === 'AM' && hour === 12) hour = 0
+    return hour * 60 + m
+  }
+
+  const teamMatchHistory = matchResults
+    .filter(result => result.team === myTeamName)
+    .map(result => {
+      const myScore = Number(result.myScore)
+      const opponentScore = Number(result.opponentScore)
+      const resultType = myScore > opponentScore ? 'win' : myScore < opponentScore ? 'loss' : 'draw'
+
+      const parsedDate = result.matchDate ? new Date(result.matchDate) : null
+      const dateLabel = parsedDate && !Number.isNaN(parsedDate.getTime())
+        ? parsedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        : (result.matchDate || '-')
+
+      const sortTimestamp = result.timestamp
+        ? new Date(result.timestamp).getTime()
+        : Number.NaN
+
+      const sortFallbackDate = parsedDate && !Number.isNaN(parsedDate.getTime())
+        ? parsedDate.getTime() + (parseTimeToMinutes(result.matchTime) * 60 * 1000)
+        : 0
+
+      return {
+        id: result.bookingId || result.timestamp || `${result.opponent}-${result.matchDate}`,
+        opponent: result.opponent || 'Unknown',
+        score: `${myScore}-${opponentScore}`,
+        result: resultType,
+        date: dateLabel,
+        venue: result.venue || '-',
+        myScore,
+        opponentScore,
+        sortValue: Number.isFinite(sortTimestamp) ? sortTimestamp : sortFallbackDate,
+      }
+    })
+    .sort((left, right) => right.sortValue - left.sortValue)
+
+  const wins   = teamMatchHistory.filter(m => m.result==='win').length
+  const losses = teamMatchHistory.filter(m => m.result==='loss').length
+  const draws  = teamMatchHistory.filter(m => m.result==='draw').length
   const total  = wins + losses + draws || 1
+  const goalsFor = teamMatchHistory.reduce((sum, match) => sum + match.myScore, 0)
+  const goalsAgainst = teamMatchHistory.reduce((sum, match) => sum + match.opponentScore, 0)
   const baseElo = info.baseElo ?? skillBaseElo[info.skill] ?? 1200
-  const currentElo = baseElo + (wins * 25) + (draws * 10) - (losses * 20)
+  const fallbackElo = baseElo + (wins * 25) + (draws * 10) - (losses * 20)
+  const currentElo = user?.eloRating ?? info.currentElo ?? fallbackElo
 
   const handleLocationConfirm = (loc) => {
     setInfo({ ...info, location: loc.address, lat: loc.lat, lng: loc.lng })
@@ -66,6 +130,8 @@ export default function TeamProfile() {
               lat: info.lat,
               lng: info.lng,
               skill: info.skill,
+              preferredDay: info.preferredDay,
+              preferredTime: info.preferredTime,
               locationVerified: true,
             }),
           })
@@ -77,42 +143,57 @@ export default function TeamProfile() {
           }
           setUser({
             ...user,
+            eloRating: data.team.eloRating,
+            eloMatchesPlayed: data.team.eloMatchesPlayed || 0,
             teamProfileCompleted: data.team.teamProfileCompleted,
             teamInfo: {
               ...info,
               name: data.team.teamName || info.name.trim(),
               location: data.team.location || info.location.trim(),
               skill: data.team.skill || info.skill,
+              preferredDay: data.team.preferredDay || info.preferredDay,
+              preferredTime: data.team.preferredTime || info.preferredTime,
               lat: info.lat,
               lng: info.lng,
               baseElo,
-              currentElo,
+              currentElo: data.team.eloRating ?? currentElo,
             },
           })
         } else {
           const response = await fetch(`${API_BASE}/teams/${user.id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ teamName: info.name.trim() }),
+            body: JSON.stringify({
+              teamName: info.name.trim(),
+              location: info.location.trim(),
+              lat: info.lat,
+              lng: info.lng,
+              preferredDay: info.preferredDay,
+              preferredTime: info.preferredTime,
+            }),
           })
           const data = await response.json()
           if (!response.ok) {
-            setToast(data.message || 'Failed to update team name.')
+            setToast(data.message || 'Failed to update team info.')
             setTimeout(() => setToast(''), 3000)
             return
           }
           setUser({
             ...user,
+            eloRating: data.team.eloRating,
+            eloMatchesPlayed: data.team.eloMatchesPlayed || 0,
             teamProfileCompleted: data.team.teamProfileCompleted,
             teamInfo: {
               ...info,
               name: data.team.teamName || info.name.trim(),
-              location: data.team.location || info.location,
+              location: data.team.location || info.location.trim(),
               skill: data.team.skill || info.skill,
+              preferredDay: data.team.preferredDay || info.preferredDay,
+              preferredTime: data.team.preferredTime || info.preferredTime,
               lat: info.lat,
               lng: info.lng,
               baseElo,
-              currentElo,
+              currentElo: data.team.eloRating ?? currentElo,
             },
           })
         }
@@ -130,6 +211,8 @@ export default function TeamProfile() {
           ...info,
           name: info.name.trim(),
           location: info.location.trim(),
+          preferredDay: info.preferredDay,
+          preferredTime: info.preferredTime,
           lat: info.lat,
           lng: info.lng,
           baseElo: computedBaseElo,
@@ -250,13 +333,83 @@ export default function TeamProfile() {
                             Base Elo for selected skill: <strong>{skillBaseElo[info.skill] ?? 1200}</strong>
                           </div>
                         </div>
+
+                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                          <div className="form-group">
+                            <label className="form-label">Preferred Day</label>
+                            <select
+                              className="form-control"
+                              value={info.preferredDay || 'Saturday'}
+                              onChange={e => setInfo({ ...info, preferredDay: e.target.value })}
+                            >
+                              {dayOptions.map(day => <option key={day}>{day}</option>)}
+                            </select>
+                          </div>
+
+                          <div className="form-group">
+                            <label className="form-label">Preferred Time</label>
+                            <select
+                              className="form-control"
+                              value={info.preferredTime || '06:00 PM'}
+                              onChange={e => setInfo({ ...info, preferredTime: e.target.value })}
+                            >
+                              {timeOptions.map(time => <option key={time}>{time}</option>)}
+                            </select>
+                          </div>
+                        </div>
                       </>
                     )}
 
                     {!isFirstSetup && (
-                      <div style={{ fontSize:12, color:'#8a96a8', marginBottom:12 }}>
-                        Only team name is editable. Skill and location are locked after setup.
-                      </div>
+                      <>
+                        <div className="form-group">
+                          <label className="form-label">Location</label>
+                          <div style={{ display:'flex', gap:8 }}>
+                            <input
+                              className="form-control"
+                              value={info.location}
+                              onChange={e => setInfo({ ...info, location: e.target.value })}
+                              placeholder="Update your team location"
+                            />
+                            <button
+                              type="button"
+                              className="btn btn-outline"
+                              onClick={() => setShowMap(true)}
+                              style={{ flexShrink:0, whiteSpace:'nowrap' }}
+                            >
+                              <i className="fas fa-map-marker-alt" /> Pick on Map
+                            </button>
+                          </div>
+                        </div>
+
+                        <div style={{ fontSize:12, color:'#8a96a8', marginBottom:12 }}>
+                          Skill is locked after setup. Team name and location can be updated.
+                        </div>
+
+                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                          <div className="form-group">
+                            <label className="form-label">Preferred Day</label>
+                            <select
+                              className="form-control"
+                              value={info.preferredDay || 'Saturday'}
+                              onChange={e => setInfo({ ...info, preferredDay: e.target.value })}
+                            >
+                              {dayOptions.map(day => <option key={day}>{day}</option>)}
+                            </select>
+                          </div>
+
+                          <div className="form-group">
+                            <label className="form-label">Preferred Time</label>
+                            <select
+                              className="form-control"
+                              value={info.preferredTime || '06:00 PM'}
+                              onChange={e => setInfo({ ...info, preferredTime: e.target.value })}
+                            >
+                              {timeOptions.map(time => <option key={time}>{time}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      </>
                     )}
 
                     <button
@@ -274,6 +427,8 @@ export default function TeamProfile() {
                       { lbl:'Team Name', val: info.name,      icon:'fa-users' },
                       { lbl:'Location',  val: info.location,  icon:'fa-location-dot' },
                       { lbl:'Skill',     val: info.skill,     icon:'fa-signal' },
+                      { lbl:'Preferred Day',  val: info.preferredDay || 'Saturday', icon:'fa-calendar-day' },
+                      { lbl:'Preferred Time', val: info.preferredTime || '06:00 PM', icon:'fa-clock' },
                       { lbl:'Captain',   val: user?.name,     icon:'fa-user-tie' },
                       { lbl:'Members',   val: '8 players',    icon:'fa-person-running' },
                     ].map(item => (
@@ -319,9 +474,9 @@ export default function TeamProfile() {
                 <div style={{ marginTop:16, padding:14, background:'#f8fafc', borderRadius:10, textAlign:'center' }}>
                   <div style={{ fontSize:12, color:'#8a96a8', marginBottom:4, fontWeight:700, textTransform:'uppercase' }}>Goals For / Against</div>
                   <div style={{ fontFamily:'Barlow Condensed,sans-serif', fontSize:24, fontWeight:900 }}>
-                    <span style={{ color:'var(--green)' }}>24</span>
+                    <span style={{ color:'var(--green)' }}>{goalsFor}</span>
                     <span style={{ color:'#e4e8ee', margin:'0 8px' }}>/</span>
-                    <span style={{ color:'var(--red)' }}>14</span>
+                    <span style={{ color:'var(--red)' }}>{goalsAgainst}</span>
                   </div>
                 </div>
 
@@ -340,7 +495,13 @@ export default function TeamProfile() {
           <div className="card anim-3" style={{ marginTop:22 }}>
             <div className="card-hd"><h3>Match History</h3></div>
             <div className="card-bd" style={{ paddingTop:8 }}>
-              {matchHistory.map(m => (
+              {teamMatchHistory.length === 0 ? (
+                <div className="empty-state" style={{ padding:'26px 18px' }}>
+                  <i className="fas fa-futbol" />
+                  <h3>No match history yet</h3>
+                  <p>Finished matches will appear here once scores are submitted.</p>
+                </div>
+              ) : teamMatchHistory.map(m => (
                 <div key={m.id} className="match-row">
                   <div style={{ display:'flex', alignItems:'center', gap:12 }}>
                     <div style={{ width:36, height:36, borderRadius:10, background: m.result==='win'?'#e6faf2': m.result==='loss'?'#fff5f5':'#fefce8', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 }}>
@@ -348,7 +509,7 @@ export default function TeamProfile() {
                     </div>
                     <div>
                       <div className="match-teams">
-                        <span style={{ color:'var(--green)' }}>My Team</span>
+                        <span style={{ color:'var(--green)' }}>{myTeamName}</span>
                         <span className="vs">vs</span>
                         <span>{m.opponent}</span>
                       </div>

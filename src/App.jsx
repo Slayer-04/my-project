@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { bookings as seedBookings } from './data/mockData.js'
+import { challenges as seedChallenges } from './data/mockData.js'
 
 /* ── Auth ──────────────────────────────── */
 import Login    from './pages/auth/Login.jsx'
@@ -45,9 +47,142 @@ function TeamProfileGuard({ children }) {
 
 export default function App() {
   const [user, setUser] = useState(null)
+  const [bookings, setBookings] = useState(() => {
+    try {
+      const stored = localStorage.getItem('fotmatch-bookings')
+      return stored ? JSON.parse(stored) : seedBookings
+    } catch (_error) {
+      return seedBookings
+    }
+  })
+  const [challenges, setChallenges] = useState(() => {
+    try {
+      const stored = localStorage.getItem('fotmatch-challenges')
+      return stored ? JSON.parse(stored) : seedChallenges
+    } catch (_error) {
+      return seedChallenges
+    }
+  })
+  const [notifications, setNotifications] = useState(() => {
+    try {
+      const stored = localStorage.getItem('fotmatch-notifications')
+      return stored ? JSON.parse(stored) : []
+    } catch (_error) {
+      return []
+    }
+  })
+  const [matchResults, setMatchResults] = useState(() => {
+    try {
+      const stored = localStorage.getItem('fotmatch-match-results')
+      return stored ? JSON.parse(stored) : []
+    } catch (_error) {
+      return []
+    }
+  })
+  const [matchPosts, setMatchPosts] = useState(() => {
+    try {
+      const stored = localStorage.getItem('fotmatch-match-posts')
+      return stored ? JSON.parse(stored) : []
+    } catch (_error) {
+      return []
+    }
+  })
+
+  const updateBookings = nextBookings => {
+    setBookings(prev => {
+      const resolvedBookings = typeof nextBookings === 'function'
+        ? nextBookings(prev)
+        : nextBookings
+
+      try {
+        localStorage.setItem('fotmatch-bookings', JSON.stringify(resolvedBookings))
+      } catch (_error) {
+        // Ignore storage failures and keep the in-memory state.
+      }
+
+      return resolvedBookings
+    })
+  }
+
+  const updateChallenges = nextChallenges => {
+    setChallenges(prev => {
+      const resolvedChallenges = typeof nextChallenges === 'function'
+        ? nextChallenges(prev)
+        : nextChallenges
+
+      try {
+        localStorage.setItem('fotmatch-challenges', JSON.stringify(resolvedChallenges))
+      } catch (_error) {
+        // Ignore storage failures and keep the in-memory state.
+      }
+
+      return resolvedChallenges
+    })
+  }
+
+  const updateNotifications = nextNotifications => {
+    setNotifications(prev => {
+      const resolvedNotifications = typeof nextNotifications === 'function'
+        ? nextNotifications(prev)
+        : nextNotifications
+
+      try {
+        localStorage.setItem('fotmatch-notifications', JSON.stringify(resolvedNotifications))
+      } catch (_error) {
+        // Ignore storage failures and keep the in-memory state.
+      }
+
+      return resolvedNotifications
+    })
+  }
+
+  const updateMatchResults = nextResults => {
+    setMatchResults(prev => {
+      const resolvedResults = typeof nextResults === 'function'
+        ? nextResults(prev)
+        : nextResults
+
+      try {
+        localStorage.setItem('fotmatch-match-results', JSON.stringify(resolvedResults))
+      } catch (_error) {
+        // Ignore storage failures and keep the in-memory state.
+      }
+
+      return resolvedResults
+    })
+  }
+
+  const updateMatchPosts = nextPosts => {
+    setMatchPosts(prev => {
+      const resolvedPosts = typeof nextPosts === 'function'
+        ? nextPosts(prev)
+        : nextPosts
+
+      try {
+        localStorage.setItem('fotmatch-match-posts', JSON.stringify(resolvedPosts))
+      } catch (_error) {
+        // Ignore storage failures and keep the in-memory state.
+      }
+
+      return resolvedPosts
+    })
+  }
 
   return (
-    <AuthContext.Provider value={{ user, setUser }}>
+    <AuthContext.Provider value={{
+      user,
+      setUser,
+      bookings,
+      setBookings: updateBookings,
+      challenges,
+      setChallenges: updateChallenges,
+      notifications,
+      setNotifications: updateNotifications,
+      matchResults,
+      setMatchResults: updateMatchResults,
+      matchPosts,
+      setMatchPosts: updateMatchPosts,
+    }}>
       <BrowserRouter>
         <Routes>
           <Route path="/"        element={<Navigate to="/login" replace />} />

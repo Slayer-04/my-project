@@ -1,0 +1,422 @@
+const express = require('express')
+const Booking = require('../models/Booking')
+const Challenge = require('../models/Challenge')
+const Match = require('../models/Match')
+const Notification = require('../models/Notification')
+const Venue = require('../models/Venue')
+const User = require('../models/User')
+const MatchResult = require('../models/MatchResult')
+
+const router = express.Router()
+
+/* ────────────────────────────────────────────────────────────────── */
+/* BOOKINGS ROUTES                                                    */
+/* ────────────────────────────────────────────────────────────────── */
+
+router.get('/bookings', async (_req, res) => {
+  try {
+    const bookings = await Booking.find({})
+      .populate('challengeId')
+      .sort({ createdAt: -1 })
+    return res.json(bookings)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch bookings.', error: error.message })
+  }
+})
+
+router.get('/bookings/team/:teamName', async (req, res) => {
+  try {
+    const bookings = await Booking.find({ team: req.params.teamName })
+      .populate('challengeId')
+      .sort({ createdAt: -1 })
+    return res.json(bookings)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch team bookings.', error: error.message })
+  }
+})
+
+router.post('/bookings', async (req, res) => {
+  try {
+    const { team, venue, date, time, status, players, amount, opponent, challengeId, note } = req.body
+
+    if (!team || !venue || !date || !time) {
+      return res.status(400).json({ message: 'team, venue, date, time are required.' })
+    }
+
+    const booking = await Booking.create({
+      team: team.trim(),
+      venue: venue.trim(),
+      date: date.trim(),
+      time: time.trim(),
+      status: status || 'pending',
+      players: players || 11,
+      amount: amount || 'Rs. 1,200',
+      opponent: opponent ? opponent.trim() : '',
+      challengeId: challengeId || null,
+      note: note ? note.trim() : '',
+    })
+
+    return res.status(201).json({ message: 'Booking created successfully.', booking })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to create booking.', error: error.message })
+  }
+})
+
+router.patch('/bookings/:id', async (req, res) => {
+  try {
+    const booking = await Booking.findByIdAndUpdate(
+      req.params.id,
+      { $set: req.body },
+      { new: true, runValidators: true }
+    ).populate('challengeId')
+
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found.' })
+    }
+
+    return res.json({ message: 'Booking updated successfully.', booking })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to update booking.', error: error.message })
+  }
+})
+
+router.delete('/bookings/:id', async (req, res) => {
+  try {
+    const booking = await Booking.findByIdAndDelete(req.params.id)
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found.' })
+    }
+    return res.json({ message: 'Booking deleted successfully.', booking })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to delete booking.', error: error.message })
+  }
+})
+
+/* ────────────────────────────────────────────────────────────────── */
+/* CHALLENGES ROUTES                                                  */
+/* ────────────────────────────────────────────────────────────────── */
+
+router.get('/challenges', async (_req, res) => {
+  try {
+    const challenges = await Challenge.find({}).sort({ createdAt: -1 })
+    return res.json(challenges)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch challenges.', error: error.message })
+  }
+})
+
+router.get('/challenges/team/:teamName', async (req, res) => {
+  try {
+    const teamName = req.params.teamName
+    const challenges = await Challenge.find({
+      $or: [{ from: teamName }, { to: teamName }],
+    }).sort({ createdAt: -1 })
+    return res.json(challenges)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch team challenges.', error: error.message })
+  }
+})
+
+router.post('/challenges', async (req, res) => {
+  try {
+    const { from, to, date, time, venue, status, note } = req.body
+
+    if (!from || !to || !date || !time || !venue) {
+      return res.status(400).json({ message: 'from, to, date, time, venue are required.' })
+    }
+
+    const challenge = await Challenge.create({
+      from: from.trim(),
+      to: to.trim(),
+      date: date.trim(),
+      time: time.trim(),
+      venue: venue.trim(),
+      status: status || 'pending',
+      note: note ? note.trim() : '',
+      sentAt: new Date(),
+    })
+
+    return res.status(201).json({ message: 'Challenge created successfully.', challenge })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to create challenge.', error: error.message })
+  }
+})
+
+router.patch('/challenges/:id', async (req, res) => {
+  try {
+    const challenge = await Challenge.findByIdAndUpdate(
+      req.params.id,
+      { $set: req.body, acceptedAt: req.body.status === 'accepted' ? new Date() : undefined },
+      { new: true, runValidators: true }
+    )
+
+    if (!challenge) {
+      return res.status(404).json({ message: 'Challenge not found.' })
+    }
+
+    return res.json({ message: 'Challenge updated successfully.', challenge })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to update challenge.', error: error.message })
+  }
+})
+
+/* ────────────────────────────────────────────────────────────────── */
+/* MATCHES (RESULTS) ROUTES                                           */
+/* ────────────────────────────────────────────────────────────────── */
+
+router.get('/matches', async (_req, res) => {
+  try {
+    const matches = await Match.find({})
+      .populate('bookingId')
+      .sort({ createdAt: -1 })
+    return res.json(matches)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch matches.', error: error.message })
+  }
+})
+
+router.get('/matches/team/:teamName', async (req, res) => {
+  try {
+    const matches = await Match.find({ team: req.params.teamName })
+      .populate('bookingId')
+      .sort({ createdAt: -1 })
+    return res.json(matches)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch team matches.', error: error.message })
+  }
+})
+
+router.post('/matches', async (req, res) => {
+  try {
+    const { bookingId, team, opponent, venue, date, time, myScore, opponentScore, note } = req.body
+
+    if (!bookingId || !team || !opponent || !venue || !date || !time) {
+      return res.status(400).json({ message: 'bookingId, team, opponent, venue, date, time are required.' })
+    }
+
+    const myScoreNum = Number(myScore)
+    const opponentScoreNum = Number(opponentScore)
+
+    let result = 'draw'
+    if (myScoreNum > opponentScoreNum) result = 'win'
+    else if (myScoreNum < opponentScoreNum) result = 'loss'
+
+    const match = await Match.create({
+      bookingId,
+      team: team.trim(),
+      opponent: opponent.trim(),
+      venue: venue.trim(),
+      date: date.trim(),
+      time: time.trim(),
+      myScore: myScoreNum,
+      opponentScore: opponentScoreNum,
+      result,
+      note: note ? note.trim() : '',
+    })
+
+    return res.status(201).json({ message: 'Match result recorded successfully.', match })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to record match result.', error: error.message })
+  }
+})
+
+/* ────────────────────────────────────────────────────────────────── */
+/* NOTIFICATIONS ROUTES                                               */
+/* ────────────────────────────────────────────────────────────────── */
+
+router.get('/notifications/team/:teamName', async (req, res) => {
+  try {
+    const notifications = await Notification.find({ team: req.params.teamName })
+      .populate('challengeId')
+      .populate('bookingId')
+      .sort({ createdAt: -1 })
+    return res.json(notifications)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch notifications.', error: error.message })
+  }
+})
+
+router.post('/notifications', async (req, res) => {
+  try {
+    const { team, text, type, challengeId, bookingId } = req.body
+
+    if (!team || !text) {
+      return res.status(400).json({ message: 'team and text are required.' })
+    }
+
+    const notification = await Notification.create({
+      team: team.trim(),
+      text: text.trim(),
+      type: type || 'general',
+      challengeId: challengeId || null,
+      bookingId: bookingId || null,
+      unread: true,
+      createdAt: new Date(),
+    })
+
+    return res.status(201).json({ message: 'Notification created.', notification })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to create notification.', error: error.message })
+  }
+})
+
+router.patch('/notifications/:id', async (req, res) => {
+  try {
+    const notification = await Notification.findByIdAndUpdate(
+      req.params.id,
+      { $set: req.body },
+      { new: true }
+    )
+
+    if (!notification) {
+      return res.status(404).json({ message: 'Notification not found.' })
+    }
+
+    return res.json({ message: 'Notification updated.', notification })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to update notification.', error: error.message })
+  }
+})
+
+/* ────────────────────────────────────────────────────────────────── */
+/* VENUES ROUTES                                                      */
+/* ────────────────────────────────────────────────────────────────── */
+
+router.get('/venues', async (_req, res) => {
+  try {
+    const venues = await Venue.find({}).sort({ rating: -1 })
+    return res.json(venues)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch venues.', error: error.message })
+  }
+})
+
+router.post('/venues', async (req, res) => {
+  try {
+    const { name, location, rating, price, type, courts, pricePerHour, lat, lng, owner } = req.body
+
+    if (!name || !location || !rating || !type || !courts) {
+      return res.status(400).json({ message: 'name, location, rating, type, courts are required.' })
+    }
+
+    const venue = await Venue.create({
+      name: name.trim(),
+      location: location.trim(),
+      rating: Number(rating),
+      price: price || 'Rs. 1,200/hr',
+      type,
+      courts: Number(courts),
+      pricePerHour: pricePerHour || 1200,
+      lat: lat || null,
+      lng: lng || null,
+      owner: owner ? owner.trim() : '',
+    })
+
+    return res.status(201).json({ message: 'Venue created successfully.', venue })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to create venue.', error: error.message })
+  }
+})
+
+router.patch('/venues/:id', async (req, res) => {
+  try {
+    const venue = await Venue.findByIdAndUpdate(
+      req.params.id,
+      { $set: req.body },
+      { new: true, runValidators: true }
+    )
+
+    if (!venue) {
+      return res.status(404).json({ message: 'Venue not found.' })
+    }
+
+    return res.json({ message: 'Venue updated successfully.', venue })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to update venue.', error: error.message })
+  }
+})
+
+/* ────────────────────────────────────────────────────────────────── */
+/* USERS ROUTES                                                       */
+/* ────────────────────────────────────────────────────────────────── */
+
+router.post('/users/register', async (req, res) => {
+  try {
+    const { name, email, password, role } = req.body
+
+    if (!name || !email || !password || !role) {
+      return res.status(400).json({ message: 'name, email, password, role are required.' })
+    }
+
+    const existing = await User.findOne({ email: email.trim().toLowerCase() })
+    if (existing) {
+      return res.status(409).json({ message: 'User already exists.' })
+    }
+
+    const user = await User.create({
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      password, // TODO: Hash password before saving
+      role,
+      status: 'active',
+    })
+
+    return res.status(201).json({ message: 'User created successfully.', user })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to create user.', error: error.message })
+  }
+})
+
+router.get('/users/:id', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select('-password')
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' })
+    }
+    return res.json(user)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch user.', error: error.message })
+  }
+})
+
+/* ────────────────────────────────────────────────────────────────── */
+/* MATCH RESULTS ROUTES                                               */
+/* ────────────────────────────────────────────────────────────────── */
+
+router.post('/match-results', async (req, res) => {
+  try {
+    const { bookingId, team, opponent, myScore, opponentScore, matchDate, matchTime, venue, submittedBy } = req.body
+
+    if (!bookingId || !team || !opponent || myScore === undefined || opponentScore === undefined) {
+      return res.status(400).json({ message: 'bookingId, team, opponent, myScore, opponentScore are required.' })
+    }
+
+    const result = await MatchResult.create({
+      bookingId,
+      team: team.trim(),
+      opponent: opponent.trim(),
+      myScore: Number(myScore),
+      opponentScore: Number(opponentScore),
+      matchDate: matchDate || new Date().toISOString().split('T')[0],
+      matchTime: matchTime || '00:00',
+      venue: venue ? venue.trim() : '',
+      submittedBy: submittedBy ? submittedBy.trim() : '',
+      timestamp: new Date(),
+    })
+
+    return res.status(201).json({ message: 'Match result submitted successfully.', result })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to submit match result.', error: error.message })
+  }
+})
+
+router.get('/match-results/booking/:bookingId', async (req, res) => {
+  try {
+    const results = await MatchResult.find({ bookingId: req.params.bookingId })
+    return res.json(results)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch match results.', error: error.message })
+  }
+})
+
+module.exports = router

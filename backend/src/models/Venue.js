@@ -1,0 +1,39 @@
+const mongoose = require('mongoose')
+
+const VenueSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true, unique: true },
+    location: { type: String, required: true, trim: true },
+    rating: { type: Number, required: true, min: 0, max: 5 },
+    price: { type: String, required: true, trim: true },
+    emoji: { type: String, default: '🏟️' },
+    type: {
+      type: String,
+      enum: ['Indoor', 'Outdoor'],
+      required: true,
+    },
+    courts: { type: Number, required: true, min: 1 },
+    pricePerHour: { type: Number, required: true, min: 0 },
+    lat: { type: Number, default: null },
+    lng: { type: Number, default: null },
+    operatingHours: {
+      open: { type: String, default: '06:00' },
+      close: { type: String, default: '22:00' },
+    },
+    owner: { type: String, default: '', trim: true },
+    contactPhone: { type: String, default: '', trim: true },
+    amenities: [{ type: String }],
+    availability: {
+      monday: { type: Boolean, default: true },
+      tuesday: { type: Boolean, default: true },
+      wednesday: { type: Boolean, default: true },
+      thursday: { type: Boolean, default: true },
+      friday: { type: Boolean, default: true },
+      saturday: { type: Boolean, default: true },
+      sunday: { type: Boolean, default: true },
+    },
+  },
+  { timestamps: true }
+)
+
+module.exports = mongoose.model('Venue', VenueSchema)

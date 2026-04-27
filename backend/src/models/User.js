@@ -1,0 +1,31 @@
+const mongoose = require('mongoose')
+
+const UserSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true },
+    email: { type: String, required: true, trim: true, lowercase: true, unique: true },
+    password: { type: String, required: true }, // Should be hashed
+    role: {
+      type: String,
+      enum: ['team', 'owner', 'admin'],
+      required: true,
+    },
+    teamInfo: {
+      teamId: { type: mongoose.Schema.Types.ObjectId, ref: 'Team', default: null },
+      teamName: { type: String, default: '', trim: true },
+      captainName: { type: String, default: '', trim: true },
+    },
+    status: {
+      type: String,
+      enum: ['active', 'inactive', 'suspended'],
+      default: 'active',
+    },
+    profileCompleted: { type: Boolean, default: false },
+    lastLogin: { type: Date, default: null },
+    verified: { type: Boolean, default: false },
+    verificationToken: { type: String, default: null },
+  },
+  { timestamps: true }
+)
+
+module.exports = mongoose.model('User', UserSchema)

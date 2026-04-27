@@ -38,10 +38,19 @@ export default function Register() {
           email: data.team.email,
           role: 'team',
           teamProfileCompleted: data.team.teamProfileCompleted,
+          eloRating: data.team.eloRating,
+          eloMatchesPlayed: data.team.eloMatchesPlayed || 0,
+          teamName: data.team.teamName || '',
           teamInfo: {
             name: data.team.teamName || '',
+            teamName: data.team.teamName || '',
             location: data.team.location || '',
             skill: data.team.skill || 'Intermediate',
+            lat: data.team.lat,
+            lng: data.team.lng,
+            preferredDay: data.team.preferredDay || 'Saturday',
+            preferredTime: data.team.preferredTime || '06:00 PM',
+            currentElo: data.team.eloRating,
           },
         })
         navigate('/team')

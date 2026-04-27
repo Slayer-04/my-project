@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
+    "seed:game-data": "node src/scripts/seedGameData.js",
+    "seed:teams": "node src/scripts/seedNepaliTeams.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

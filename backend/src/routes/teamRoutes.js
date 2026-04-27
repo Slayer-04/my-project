@@ -1,5 +1,6 @@
 const express = require('express')
 const Team = require('../models/Team')
+const { rankTeamsByCompatibility } = require('../algorithms/compatibility')
 
 const router = express.Router()
 
@@ -49,6 +50,72 @@ router.get('/email/:email', async (req, res) => {
   }
 })
 
+router.get('/', async (req, res) => {
+  try {
+    const query = {}
+    if (typeof req.query.district === 'string' && req.query.district.trim()) {
+      query.district = req.query.district.trim()
+    }
+
+    const limit = Number(req.query.limit)
+    const random = String(req.query.random || '').toLowerCase() === 'true'
+
+    let teamsQuery
+
+    if (random && Number.isFinite(limit) && limit > 0) {
+      const pipeline = [{ $match: query }, { $sample: { size: limit } }]
+      const allTeams = await Team.aggregate(pipeline)
+      return res.json(allTeams)
+    }
+
+    teamsQuery = Team.find(query).sort({ createdAt: -1 })
+    if (Number.isFinite(limit) && limit > 0) {
+      teamsQuery = teamsQuery.limit(limit)
+    }
+
+    const allTeams = await teamsQuery
+    return res.json(allTeams)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch teams.', error: error.message })
+  }
+})
+
+router.get('/:id/recommendations', async (req, res) => {
+  try {
+    const team = await Team.findById(req.params.id)
+    if (!team) {
+      return res.status(404).json({ message: 'Team not found.' })
+    }
+
+    const allTeams = await Team.find({})
+    const venueCoords = req.query.lat && req.query.lng
+      ? { lat: Number(req.query.lat), lng: Number(req.query.lng) }
+      : null
+
+    const result = rankTeamsByCompatibility({
+      myTeam: team,
+      teams: allTeams,
+      venueCoords,
+      preferredDay: req.query.day,
+      preferredTime: req.query.time,
+      preferredVenue: req.query.venue,
+      limit: Number(req.query.limit) > 0 ? Number(req.query.limit) : 5,
+    })
+
+    return res.json({
+      teamId: team._id,
+      context: {
+        day: req.query.day || null,
+        time: req.query.time || null,
+        venue: req.query.venue || null,
+      },
+      ...result,
+    })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to score team compatibility.', error: error.message })
+  }
+})
+
 router.get('/:id', async (req, res) => {
   try {
     const team = await Team.findById(req.params.id)
@@ -63,7 +130,7 @@ router.get('/:id', async (req, res) => {
 
 router.patch('/:id/complete-profile', async (req, res) => {
   try {
-    const { teamName, location, skill, locationVerified } = req.body
+    const { teamName, location, skill, locationVerified, lat, lng, preferredDay, preferredTime } = req.body
 
     if (!teamName || !location || !skill) {
       return res.status(400).json({ message: 'teamName, location, and skill are required.' })
@@ -73,8 +140,17 @@ router.patch('/:id/complete-profile', async (req, res) => {
       return res.status(400).json({ message: 'Location must be re-verified before completing profile.' })
     }
 
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({ message: 'Valid lat and lng coordinates are required.' })
+    }
+
     if (!['Beginner', 'Intermediate', 'Advanced'].includes(skill)) {
       return res.status(400).json({ message: 'Invalid skill value.' })
+    }
+
+    const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    if (typeof preferredDay !== 'undefined' && preferredDay && !allowedDays.includes(preferredDay)) {
+      return res.status(400).json({ message: 'Invalid preferredDay value.' })
     }
 
     const team = await Team.findById(req.params.id)
@@ -89,6 +165,10 @@ router.patch('/:id/complete-profile', async (req, res) => {
     team.teamName = teamName.trim()
     team.location = location.trim()
     team.skill = skill
+    team.preferredDay = preferredDay || ''
+    team.preferredTime = preferredTime || ''
+    team.lat = lat
+    team.lng = lng
     team.locationVerified = true
     team.teamProfileCompleted = true
     team.skillLocked = true
@@ -108,7 +188,12 @@ router.patch('/:id/complete-profile', async (req, res) => {
 
 router.patch('/:id', async (req, res) => {
   try {
-    const { teamName, location, skill } = req.body
+    const { teamName, location, skill, lat, lng, preferredDay, preferredTime } = req.body
+    const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    if (typeof preferredDay !== 'undefined' && preferredDay && !allowedDays.includes(preferredDay)) {
+      return res.status(400).json({ message: 'Invalid preferredDay value.' })
+    }
+
 
     const team = await Team.findById(req.params.id)
     if (!team) {
@@ -116,8 +201,8 @@ router.patch('/:id', async (req, res) => {
     }
 
     if (team.teamProfileCompleted) {
-      if (typeof location !== 'undefined' || typeof skill !== 'undefined') {
-        return res.status(400).json({ message: 'Location and skill are locked after profile completion. Only teamName can be updated.' })
+      if (typeof skill !== 'undefined') {
+        return res.status(400).json({ message: 'Skill is locked after profile completion.' })
       }
     }
 
@@ -128,8 +213,28 @@ router.patch('/:id', async (req, res) => {
       team.teamName = teamName.trim()
     }
 
+    if (typeof location !== 'undefined') {
+      const normalizedLocation = String(location).trim()
+      if (!normalizedLocation) {
+        return res.status(400).json({ message: 'location cannot be empty.' })
+      }
+      team.location = normalizedLocation
+    }
+
+    if (typeof preferredDay !== 'undefined') {
+      team.preferredDay = String(preferredDay).trim()
+    }
+
+    if (typeof preferredTime !== 'undefined') {
+      team.preferredTime = String(preferredTime).trim()
+    }
+
+    if (typeof lat === 'number' && typeof lng === 'number') {
+      team.lat = lat
+      team.lng = lng
+    }
+
     if (!team.teamProfileCompleted) {
-      if (typeof location !== 'undefined') team.location = String(location).trim()
       if (typeof skill !== 'undefined') {
         if (!['Beginner', 'Intermediate', 'Advanced'].includes(skill)) {
           return res.status(400).json({ message: 'Invalid skill value.' })

@@ -3,6 +3,8 @@ const cors = require('cors')
 const mongoose = require('mongoose')
 const dotenv = require('dotenv')
 const teamRoutes = require('./routes/teamRoutes')
+const gameRoutes = require('./routes/gameRoutes')
+const dataRoutes = require('./routes/dataRoutes')
 
 dotenv.config()
 
@@ -18,6 +20,8 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.use('/api/teams', teamRoutes)
+app.use('/api', gameRoutes)
+app.use('/api', dataRoutes)
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ message: 'API route not found.' })
@@ -26,6 +30,7 @@ app.use('/api', (_req, res) => {
 const start = async () => {
   if (!MONGODB_URI) {
     console.error('Missing MONGODB_URI in environment variables.')
+    console.error('Create backend/.env from backend/.env.example and set MONGODB_URI to a valid MongoDB connection string.')
     process.exit(1)
   }
 

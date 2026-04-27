@@ -1,12 +1,77 @@
 /* ─── TEAMS ──────────────────────────────────────────────────────────────── */
-export const teams = [
-  { id:1, name:'Thunder Strikers', skill:'Advanced',     location:'Baneshwor',  players:10, wins:18, losses:4,  color:'blue',   emoji:'⚡' },
-  { id:2, name:'Green Eagles',     skill:'Intermediate', location:'Lazimpat',   players:8,  wins:12, losses:8,  color:'green',  emoji:'🦅' },
-  { id:3, name:'Red Wolves',       skill:'Advanced',     location:'Thamel',     players:10, wins:15, losses:6,  color:'orange', emoji:'🐺' },
-  { id:4, name:'Blue Phoenix',     skill:'Beginner',     location:'Patan',      players:7,  wins:5,  losses:10, color:'purple', emoji:'🔥' },
-  { id:5, name:'Night Owls',       skill:'Intermediate', location:'Bhaktapur',  players:9,  wins:10, losses:7,  color:'teal',   emoji:'🦉' },
-  { id:6, name:'Storm United',     skill:'Advanced',     location:'Koteshwor',  players:10, wins:20, losses:2,  color:'blue',   emoji:'⛈️' },
+const TEAM_BASES = [
+  { location:'Lazimpat', lat:27.7184, lng:85.3235 },
+  { location:'Baneshwor', lat:27.6881, lng:85.3470 },
+  { location:'Thamel', lat:27.7162, lng:85.3128 },
+  { location:'Patan', lat:27.6707, lng:85.3202 },
+  { location:'Bhaktapur', lat:27.6710, lng:85.4298 },
+  { location:'Koteshwor', lat:27.6798, lng:85.3486 },
+  { location:'Kirtipur', lat:27.6777, lng:85.2775 },
+  { location:'Kalanki', lat:27.6887, lng:85.2760 },
+  { location:'Maharajgunj', lat:27.7360, lng:85.3347 },
+  { location:'Chabahil', lat:27.7207, lng:85.3487 },
+  { location:'Gongabu', lat:27.7308, lng:85.3292 },
+  { location:'Swayambhu', lat:27.7149, lng:85.2908 },
+  { location:'Pulchowk', lat:27.6764, lng:85.3166 },
+  { location:'Gwarko', lat:27.6576, lng:85.3333 },
+  { location:'Balkhu', lat:27.6690, lng:85.2918 },
+  { location:'Jorpati', lat:27.7443, lng:85.3660 },
+  { location:'Kapan', lat:27.7409, lng:85.3602 },
+  { location:'Tokha', lat:27.7480, lng:85.3230 },
+  { location:'Sanepa', lat:27.6751, lng:85.3076 },
+  { location:'Bhaisepati', lat:27.6605, lng:85.2945 },
+  { location:'Balkumari', lat:27.6577, lng:85.3420 },
+  { location:'Imadol', lat:27.6428, lng:85.3270 },
+  { location:'Sifal', lat:27.7020, lng:85.3410 },
+  { location:'Naya Bazaar', lat:27.7298, lng:85.3036 },
+  { location:'Maitidevi', lat:27.7055, lng:85.3295 },
 ]
+
+const TEAM_VARIANTS = [
+  { suffix:'Lions', skill:'Advanced', color:'blue', emoji:'🦁', players:10, wins:18, losses:4, streak:4 },
+  { suffix:'Falcons', skill:'Intermediate', color:'green', emoji:'🦅', players:9, wins:14, losses:6, streak:2 },
+  { suffix:'Rangers', skill:'Beginner', color:'orange', emoji:'⚡', players:8, wins:9, losses:9, streak:-3 },
+  { suffix:'Titans', skill:'Advanced', color:'purple', emoji:'🏆', players:10, wins:16, losses:5, streak:1 },
+]
+
+const TEAM_OFFSETS = [
+  { lat:0.0000, lng:0.0000 },
+  { lat:0.0012, lng:0.0010 },
+  { lat:-0.0010, lng:0.0013 },
+  { lat:0.0015, lng:-0.0011 },
+]
+
+const buildTeam = (base, baseIndex, variant, variantIndex) => {
+  const offset = TEAM_OFFSETS[variantIndex]
+  const id = (baseIndex * TEAM_VARIANTS.length) + variantIndex + 1
+
+  return {
+    id,
+    name: `${base.location} ${variant.suffix}`,
+    skill: variant.skill,
+    location: base.location,
+    lat: Number((base.lat + offset.lat).toFixed(4)),
+    lng: Number((base.lng + offset.lng).toFixed(4)),
+    players: variant.players - (baseIndex % 2),
+    wins: variant.wins + (baseIndex % 6),
+    losses: variant.losses + ((baseIndex + variantIndex) % 4),
+    streak: variant.streak + ((baseIndex % 3) - 1),
+    color: variant.color,
+    emoji: variant.emoji,
+  }
+}
+
+export const teams = TEAM_BASES.flatMap((base, baseIndex) => (
+  TEAM_VARIANTS.map((variant, variantIndex) => buildTeam(base, baseIndex, variant, variantIndex))
+))
+
+export const LOCATION_COORDS = {
+  ...Object.fromEntries(TEAM_BASES.map(({ location, lat, lng }) => ([location, { lat, lng }]))),
+  'Arena Futsal Park': { lat: 27.6881, lng: 85.3470 },
+  'Champions Court': { lat: 27.7184, lng: 85.3235 },
+  'Goal Zone Futsal': { lat: 27.7162, lng: 85.3128 },
+  'Patan Sports Hub': { lat: 27.6707, lng: 85.3202 },
+}
 
 /* ─── VENUES ─────────────────────────────────────────────────────────────── */
 export const venues = [

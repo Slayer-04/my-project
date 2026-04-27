@@ -1,41 +1,110 @@
 import React, { useState } from 'react'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
-import { teams, challenges as init } from '../../data/mockData.js'
-
-const MY_TEAM = 'My Team'
+import { teams } from '../../data/mockData.js'
+import { useAuth } from '../../App.jsx'
+import { selectOptimalMatchLocation } from '../../utils/venueSelector.js'
 
 export default function Challenges() {
-  const [list,   setList]   = useState(init)
+  const { user, challenges, setChallenges, setNotifications, bookings, setBookings } = useAuth()
   const [modal,  setModal]  = useState(false)
   const [tab,    setTab]    = useState('all')
   const [toast,  setToast]  = useState('')
   const [detail, setDetail] = useState(null)
   const [form,   setForm]   = useState({ team:'', date:'', time:'', venue:'Arena Futsal Park', note:'' })
+  const myTeamName = user?.teamInfo?.name || user?.teamInfo?.teamName || user?.teamName || 'My Team'
+  const list = challenges
 
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
   const send = () => {
     if (!form.team || !form.date || !form.time) return
-    setList(prev => [{
-      id: prev.length + Date.now(),
-      from: MY_TEAM, to: form.team,
+    const challengeId = Date.now()
+    setChallenges(prev => [{
+      id: challengeId,
+      from: myTeamName, to: form.team,
       date: form.date, time: form.time,
       venue: form.venue, note: form.note,
       status: 'pending',
+    }, ...prev])
+    setNotifications(prev => [{
+      id: Date.now(),
+      challengeId,
+      type: 'challenge-request',
+      text: `${myTeamName} challenged your team!`,
+      time: 'just now',
+      unread: true,
+      team: form.team,
+      createdAt: new Date().toISOString(),
     }, ...prev])
     setModal(false)
     setForm({ team:'', date:'', time:'', venue:'Arena Futsal Park', note:'' })
     toast$(`🏆 Challenge sent to ${form.team}!`)
   }
 
-  const accept  = id => { setList(l => l.map(c => c.id===id ? {...c,status:'accepted'}  : c)); setDetail(null); toast$('✅ Challenge accepted!') }
-  const decline = id => { setList(l => l.map(c => c.id===id ? {...c,status:'declined'}  : c)); setDetail(null) }
-  const cancel  = id => { setList(l => l.map(c => c.id===id ? {...c,status:'cancelled'} : c)); setDetail(null); toast$('Challenge cancelled.') }
+  const accept  = id => { 
+    const challenge = list.find(c => c.id === id)
+    if (!challenge) return
+    
+    const useExactSchedule = Boolean(challenge.exactSchedule)
+    const location = useExactSchedule
+      ? { venue: challenge.venue, time: challenge.time }
+      : selectOptimalMatchLocation(
+          challenge.from,
+          challenge.to,
+          challenge.date || new Date().toISOString().split('T')[0],
+          challenge.time,
+          bookings
+        )
+    
+    // Auto-selected booking date
+    const bookingDate = challenge.date || new Date().toISOString().split('T')[0]
+    
+    // Update challenge status with venue and time
+    setChallenges(l => l.map(c => c.id===id ? {...c, status:'accepted', venue: location.venue, time: location.time}  : c))
+    
+    // Add bookings for BOTH teams so they both see it in upcoming bookings
+    const baseBookingId = Date.now()
+    setBookings(prev => [
+      ...prev,
+      {
+        id: baseBookingId,
+        team: myTeamName,
+        venue: location.venue,
+        date: bookingDate,
+        time: location.time,
+        status: 'confirmed',
+        players: 11,
+        amount: 'Rs. 1,200',
+        challengeId: challenge.id,
+        opponent: challenge.from,
+      },
+      {
+        id: baseBookingId + 1,
+        team: challenge.from,
+        venue: location.venue,
+        date: bookingDate,
+        time: location.time,
+        status: 'confirmed',
+        players: 11,
+        amount: 'Rs. 1,200',
+        challengeId: challenge.id,
+        opponent: myTeamName,
+      }
+    ])
+    
+    setDetail(null)
+    toast$(useExactSchedule
+      ? `✅ Challenge accepted with exact schedule: ${location.venue} at ${location.time}`
+      : `✅ Challenge accepted! Match at ${location.venue} at ${location.time}`)
+  }
+  const decline = id => { setChallenges(l => l.map(c => c.id===id ? {...c,status:'declined'}  : c)); setDetail(null) }
+  const cancel  = id => { setChallenges(l => l.map(c => c.id===id ? {...c,status:'cancelled'} : c)); setDetail(null); toast$('Challenge cancelled.') }
 
-  const incoming  = list.filter(c => c.to   === MY_TEAM)
-  const outgoing  = list.filter(c => c.from === MY_TEAM)
-  const displayed = tab==='incoming' ? incoming : tab==='outgoing' ? outgoing : list
+  const incoming  = list.filter(c => c.to   === myTeamName)
+  const outgoing  = list.filter(c => c.from === myTeamName)
+  const scopedList = [...incoming, ...outgoing]
+  const displayed = tab==='incoming' ? incoming : tab==='outgoing' ? outgoing : scopedList
 
   const bdg = s =>
     s==='accepted'  ? 'success' :
@@ -64,8 +133,8 @@ export default function Challenges() {
             {[
               { lbl:'Incoming', cls:'si-orange', icon:'fa-inbox',       v: incoming.length,                               sub:'Received' },
               { lbl:'Outgoing', cls:'si-blue',   icon:'fa-paper-plane', v: outgoing.length,                               sub:'Sent by you' },
-              { lbl:'Accepted', cls:'si-green',  icon:'fa-check-circle',v: list.filter(c=>c.status==='accepted').length,  sub:'Confirmed' },
-              { lbl:'Pending',  cls:'si-yellow', icon:'fa-clock',       v: list.filter(c=>c.status==='pending').length,   sub:'Awaiting reply' },
+              { lbl:'Accepted', cls:'si-green',  icon:'fa-check-circle',v: scopedList.filter(c=>c.status==='accepted').length,  sub:'Confirmed' },
+              { lbl:'Pending',  cls:'si-yellow', icon:'fa-clock',       v: scopedList.filter(c=>c.status==='pending').length,   sub:'Awaiting reply' },
             ].map(s => (
               <div className="stat-card" key={s.lbl}>
                 <div className={`stat-icon ${s.cls}`}><i className={`fas ${s.icon}`} /></div>
@@ -85,7 +154,7 @@ export default function Challenges() {
           {/* Tabs */}
           <div style={{ display:'flex', gap:8, marginBottom:18 }} className="anim-3">
             {[
-              { key:'all',      label:'All',      count: list.length,     dot: 0 },
+              { key:'all',      label:'All',      count: scopedList.length, dot: 0 },
               { key:'incoming', label:'Incoming', count: incoming.length, dot: pendingIncoming },
               { key:'outgoing', label:'Outgoing', count: outgoing.length, dot: 0 },
             ].map(t => (
@@ -181,8 +250,8 @@ export default function Challenges() {
             <div className="card-hd"><h3>Quick Challenge a Team</h3></div>
             <div className="card-bd">
               <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))', gap:10 }}>
-                {teams.map(t => {
-                  const alreadySent = list.some(c => c.from===MY_TEAM && c.to===t.name && c.status==='pending')
+                {teams.filter(t => t.name !== myTeamName).map(t => {
+                  const alreadySent = list.some(c => c.from===myTeamName && c.to===t.name && c.status==='pending')
                   return (
                     <div key={t.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'11px 14px', background:'#f8fafc', borderRadius:10, border:'1px solid #e4e8ee' }}>
                       <div style={{ display:'flex', alignItems:'center', gap:10 }}>
@@ -295,7 +364,7 @@ export default function Challenges() {
               </div>
             )}
             <div style={{ display:'flex', gap:10, marginTop:20 }}>
-              {detail.status==='pending' && detail.to===MY_TEAM && (
+                      {detail.status==='pending' && detail.to===myTeamName && (
                 <>
                   <button className="btn btn-primary" style={{ flex:1 }} onClick={() => accept(detail.id)}>
                     <i className="fas fa-check" /> Accept
@@ -303,7 +372,7 @@ export default function Challenges() {
                   <button className="btn btn-outline" onClick={() => decline(detail.id)}>Decline</button>
                 </>
               )}
-              {detail.status==='pending' && detail.from===MY_TEAM && (
+              {detail.status==='pending' && detail.from===myTeamName && (
                 <button className="btn btn-danger" style={{ flex:1 }} onClick={() => cancel(detail.id)}>
                   <i className="fas fa-xmark" /> Cancel Challenge
                 </button>
