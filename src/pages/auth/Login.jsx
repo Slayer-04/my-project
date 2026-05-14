@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
+import { futsalPartners } from '../../data/mockData.js'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 
@@ -16,7 +17,6 @@ const DEMO = {
       skill:'Intermediate',
     },
   },
-  owner: { name:'Bikash Rai',   email:'owner@fotmatch.com', role:'owner' },
   admin: { name:'Super Admin',  email:'admin@fotmatch.com', role:'admin' },
 }
 
@@ -25,6 +25,7 @@ export default function Login() {
   const navigate    = useNavigate()
   const [f, setF]   = useState({ email:'', password:'', role:'team' })
   const [teamOptions, setTeamOptions] = useState([])
+  const [ownerOptions, setOwnerOptions] = useState([])
   const [err, setErr]     = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -69,12 +70,35 @@ export default function Login() {
     }
   }, [f.role, teamOptions.length])
 
+  // Load futsal owner options
+  useEffect(() => {
+    if (f.role !== 'owner') return
+    
+    const owners = futsalPartners.map((partner, index) => ({
+      id: partner.id,
+      email: `${partner.owner.toLowerCase().replace(/\s+/g, '.')}@fotmatch.com`,
+      name: partner.owner,
+      venue: partner.name,
+      label: `${partner.owner} (${partner.name})`,
+    }))
+    
+    setOwnerOptions(owners)
+    setF(prev => ({ ...prev, email: owners[0]?.email || '' }))
+  }, [f.role])
+
   const selectedTeam = teamOptions.find(team => team.email === f.email) || null
+  const selectedOwner = ownerOptions.find(owner => owner.email === f.email) || null
 
   const changeRole = (role) => {
     if (role === 'team') {
       const nextEmail = teamOptions[0]?.email || ''
       setF(prev => ({ ...prev, role, email: prev.email || nextEmail }))
+      return
+    }
+
+    if (role === 'owner') {
+      const nextEmail = ownerOptions[0]?.email || ''
+      setF(prev => ({ ...prev, role, email: nextEmail }))
       return
     }
 
@@ -88,10 +112,16 @@ export default function Login() {
       return
     }
 
+    if (role === 'owner') {
+      setErr('Pick a futsal owner account from the list below.')
+      setF(prev => ({ ...prev, role: 'owner' }))
+      return
+    }
+
     setLoading(true)
     setTimeout(() => {
       setUser(DEMO[role])
-      navigate({ team:'/team', owner:'/owner', admin:'/admin' }[role])
+      navigate({ admin:'/admin' }[role])
     }, 500)
   }
 
@@ -100,10 +130,26 @@ export default function Login() {
     if (!f.email || !f.password) return setErr('Please fill in all fields.')
 
     if (f.role !== 'team') {
+      if (f.role === 'owner') {
+        setLoading(true)
+        setTimeout(() => {
+          const owner = ownerOptions.find(o => o.email === f.email)
+          setUser({
+            name: owner?.name || 'Futsal Owner',
+            email: owner?.email,
+            role: 'owner',
+            venueId: owner?.id,
+            venueName: owner?.venue,
+          })
+          navigate('/owner')
+        }, 500)
+        return
+      }
+
       setLoading(true)
       setTimeout(() => {
         setUser(DEMO[f.role])
-        navigate({ owner:'/owner', admin:'/admin' }[f.role])
+        navigate({ admin:'/admin' }[f.role])
       }, 500)
       return
     }
@@ -191,6 +237,26 @@ export default function Login() {
               {selectedTeam && (
                 <div style={{ fontSize:12, color:'var(--txt-3)', marginTop:6 }}>
                   User: {selectedTeam.captainName} | Email: {selectedTeam.email}
+                </div>
+              )}
+            </div>
+          )}
+          {f.role === 'owner' && ownerOptions.length > 0 && (
+            <div className="form-group">
+              <label className="form-label">Futsal Owner Account</label>
+              <select
+                className="form-control"
+                value={f.email}
+                onChange={e => setF({ ...f, email: e.target.value })}
+              >
+                <option value="">Select an owner account</option>
+                {ownerOptions.map(owner => (
+                  <option key={owner.id} value={owner.email}>{owner.label}</option>
+                ))}
+              </select>
+              {selectedOwner && (
+                <div style={{ fontSize:12, color:'var(--txt-3)', marginTop:6 }}>
+                  Owner: {selectedOwner.name} | Venue: {selectedOwner.venue} | Email: {selectedOwner.email}
                 </div>
               )}
             </div>
