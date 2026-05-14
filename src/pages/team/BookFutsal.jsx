@@ -124,6 +124,20 @@ export default function BookFutsal() {
       return
     }
 
+    // Check for existing pending booking from same team for same slot
+    const hasPendingBooking = bookings.some(booking => (
+      booking.status === 'pending'
+      && booking.team === teamName
+      && booking.venue === venueName
+      && booking.date === bookingDate
+      && booking.time === slot
+    ))
+
+    if (hasPendingBooking) {
+      toast$(`⛔ You already have a pending booking for ${slot} on ${dayLabel}.`)
+      return
+    }
+
     if (bookingDate === todayId) {
       const now = new Date()
       const nowMinutes = (now.getHours() * 60) + now.getMinutes()

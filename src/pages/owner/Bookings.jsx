@@ -12,13 +12,44 @@ export default function Bookings() {
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
   const acceptBooking = (notificationId, bookingId) => {
-    // Update booking status to confirmed
-    setBookings(l => l.map(b => b.id===bookingId ? {...b, status:'confirmed'} : b))
+    // Get the booking being accepted
+    const acceptedBooking = bookings.find(b => b.id === bookingId)
     
-    // Remove notification
-    setNotifications(n => n.filter(notif => notif.id !== notificationId))
+    // Update booking status to confirmed and auto-reject conflicting pending bookings
+    setBookings(prevBookings => 
+      prevBookings.map(b => {
+        if (b.id === bookingId) {
+          return {...b, status:'confirmed'}
+        }
+        // Auto-reject other pending bookings for the same time slot
+        if (b.status === 'pending' 
+            && b.venue === acceptedBooking.venue
+            && b.date === acceptedBooking.date
+            && b.time === acceptedBooking.time) {
+          return {...b, status:'cancelled'}
+        }
+        return b
+      })
+    )
     
-    toast$('✅ Booking accepted and confirmed!')
+    // Remove notification and auto-reject notifications for conflicting bookings
+    setNotifications(prevNotifications => 
+      prevNotifications.filter(notif => {
+        // Keep the notification we're accepting
+        if (notif.id === notificationId) return false
+        
+        // Remove notifications for conflicting bookings
+        if (notif.type === 'booking_request'
+            && notif.venue === acceptedBooking.venue
+            && notif.date === acceptedBooking.date
+            && notif.time === acceptedBooking.time) {
+          return false
+        }
+        return true
+      })
+    )
+    
+    toast$('✅ Booking accepted! Other conflicting bookings auto-rejected.')
   }
 
   const declineBooking = (notificationId, bookingId) => {
@@ -32,8 +63,22 @@ export default function Bookings() {
   }
 
   const confirm = id => {
-    setBookings(l => l.map(b => b.id===id ? {...b, status:'confirmed'} : b))
-    toast$('✅ Booking confirmed!')
+    // Get the booking being confirmed
+    const confirmedBooking = bookings.find(b => b.id === id)
+    
+    // Update booking status and auto-reject conflicting pending bookings
+    setBookings(l => l.map(b => {
+      if (b.id === id) return {...b, status:'confirmed'}
+      // Auto-reject other pending bookings for the same time slot
+      if (b.status === 'pending' 
+          && b.venue === confirmedBooking.venue
+          && b.date === confirmedBooking.date
+          && b.time === confirmedBooking.time) {
+        return {...b, status:'cancelled'}
+      }
+      return b
+    }))
+    toast$('✅ Booking confirmed! Other conflicting bookings auto-rejected.')
   }
   const cancel = id => {
     setBookings(l => l.map(b => b.id===id ? {...b, status:'cancelled'} : b))
