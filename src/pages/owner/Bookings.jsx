@@ -1,10 +1,10 @@
 import React, { useState } from 'react'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
-import { bookings as init } from '../../data/mockData.js'
+import { useAuth } from '../../App.jsx'
 
 export default function Bookings() {
-  const [list,   setList]   = useState(init)
+  const { bookings, setBookings } = useAuth()
   const [detail, setDetail] = useState(null)
   const [toast,  setToast]  = useState('')
   const [filter, setFilter] = useState('All')
@@ -12,15 +12,15 @@ export default function Bookings() {
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
   const confirm = id => {
-    setList(l => l.map(b => b.id===id ? {...b, status:'confirmed'} : b))
+    setBookings(l => l.map(b => b.id===id ? {...b, status:'confirmed'} : b))
     toast$('✅ Booking confirmed!')
   }
   const cancel = id => {
-    setList(l => l.map(b => b.id===id ? {...b, status:'cancelled'} : b))
+    setBookings(l => l.map(b => b.id===id ? {...b, status:'cancelled'} : b))
     setDetail(null)
   }
 
-  const filtered = list.filter(b => filter==='All' || b.status===filter.toLowerCase())
+  const filtered = bookings.filter(b => filter==='All' || b.status===filter.toLowerCase())
 
   const bdg = s => s==='confirmed'?'success': s==='pending'?'warning':'danger'
 
@@ -39,9 +39,9 @@ export default function Bookings() {
           {/* Stats */}
           <div className="stats-row anim-2" style={{ gridTemplateColumns:'repeat(3,1fr)' }}>
             {[
-              { lbl:'Total',     cls:'si-blue',   icon:'fa-clipboard-list', v: list.length },
-              { lbl:'Confirmed', cls:'si-green',  icon:'fa-check-circle',   v: list.filter(b=>b.status==='confirmed').length },
-              { lbl:'Pending',   cls:'si-orange', icon:'fa-clock',          v: list.filter(b=>b.status==='pending').length },
+              { lbl:'Total',     cls:'si-blue',   icon:'fa-clipboard-list', v: bookings.length },
+              { lbl:'Confirmed', cls:'si-green',  icon:'fa-check-circle',   v: bookings.filter(b=>b.status==='confirmed').length },
+              { lbl:'Pending',   cls:'si-orange', icon:'fa-clock',          v: bookings.filter(b=>b.status==='pending').length },
             ].map(s => (
               <div className="stat-card" key={s.lbl}>
                 <div className={`stat-icon ${s.cls}`}><i className={`fas ${s.icon}`} /></div>
