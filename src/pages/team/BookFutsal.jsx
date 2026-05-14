@@ -87,6 +87,20 @@ export default function BookFutsal() {
     return new Set(bookedTimes)
   }, [bookingVenue, bookings, selectedBookingDate])
 
+  const pendingSlotTimes = useMemo(() => {
+    if (!bookingVenue || !selectedBookingDate) return new Set()
+
+    const pendingTimes = bookings
+      .filter(booking => (
+        booking.status === 'pending'
+        && booking.venue === bookingVenue.name
+        && booking.date === selectedBookingDate
+      ))
+      .map(booking => booking.time)
+
+    return new Set(pendingTimes)
+  }, [bookingVenue, bookings, selectedBookingDate])
+
   const openSlotCount = openSlotsForVenue.filter(slot => !bookedSlotTimes.has(slot.time)).length
 
   const openBookingModal = venue => {
@@ -281,16 +295,20 @@ export default function BookFutsal() {
                     ) : (
                       <div className="booking-slot-grid">
                         {openSlotsForVenue.map(slot => {
-                          const isBooked = bookedSlotTimes.has(slot.time)
+                          const isConfirmed = bookedSlotTimes.has(slot.time)
+                          const isPending = pendingSlotTimes.has(slot.time)
+                          const isDisabled = isConfirmed || isPending
                           return (
                           <button
                             key={`${bookingVenue.id}-${selectedDayIndex}-${slot.time}`}
-                            className={`booking-slot-card ${isBooked ? 'booked' : ''}`}
-                            disabled={isBooked}
+                            className={`booking-slot-card ${isConfirmed ? 'booked' : isPending ? 'pending' : ''}`}
+                            disabled={isDisabled}
                             onClick={() => book(bookingVenue, bookingDays[selectedDayIndex].label, slot.time)}
                           >
                             <strong>{slot.time}</strong>
-                            <span>{isBooked ? 'Already booked' : 'Tap to book this 1-hour slot'}</span>
+                            <span>
+                              {isConfirmed ? '❌ Booked' : isPending ? '⏳ Pending' : 'Tap to book'}
+                            </span>
                           </button>
                           )
                         })}

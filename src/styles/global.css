@@ -758,6 +758,21 @@ select.form-control { cursor: pointer; }
   border-color: #fca5a5;
 }
 
+.booking-slot-card.pending {
+  border-color: #fbbf24;
+  background: #fffbeb;
+  color: #d97706;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.booking-slot-card.pending span {
+  color: #d97706;
+}
+.booking-slot-card.pending:hover {
+  transform: none;
+  border-color: #fbbf24;
+}
+
 /* ─── Status dot ─────────────────────────────────────────────── */
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .sd-online  { background: var(--green); box-shadow: 0 0 0 3px rgba(0,185,107,.2); }
