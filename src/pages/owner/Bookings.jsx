@@ -81,15 +81,20 @@ export default function Bookings() {
                   <i className="fas fa-bell" /> Pending Booking Requests
                 </h3>
                 {pendingRequests.map(req => (
-                  <div key={req.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px', backgroundColor:'white', borderRadius:'8px', border:'1px solid #ffe0b2' }}>
-                    <div>
+                  <div key={req.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', padding:'12px', backgroundColor:'white', borderRadius:'8px', border:'1px solid #ffe0b2' }}>
+                    <div style={{ flex:1 }}>
                       <div style={{ fontWeight:700, fontSize:14 }}>{req.team} - {req.venue}</div>
                       <div style={{ fontSize:12, color:'#8a96a8', marginTop:4 }}>
                         📅 {req.date} at {req.time}
                       </div>
-                      <div style={{ fontSize:12, color:'#555', marginTop:4 }}>{req.message}</div>
+                      <div style={{ fontSize:12, color:'#555', marginTop:4, marginBottom:8 }}>{req.message}</div>
+                      <div style={{ backgroundColor:'#f5f5f5', padding:'8px', borderRadius:'4px', fontSize:11, color:'#333' }}>
+                        <div><strong>📧 Email:</strong> {req.ownerEmail}</div>
+                        <div><strong>👤 Owner:</strong> {req.ownerName}</div>
+                        {req.ownerPhone && <div><strong>📱 Phone:</strong> {req.ownerPhone}</div>}
+                      </div>
                     </div>
-                    <div style={{ display:'flex', gap:8 }}>
+                    <div style={{ display:'flex', gap:8, marginLeft:12, flexShrink:0 }}>
                       <button 
                         className="btn btn-success btn-sm" 
                         onClick={() => acceptBooking(req.id, req.bookingId)}

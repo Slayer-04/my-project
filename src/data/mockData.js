@@ -77,6 +77,7 @@ export const LOCATION_COORDS = {
 export const venues = [
   {
     id:1, name:'Arena Futsal Park',  location:'Baneshwor, Kathmandu', rating:4.8, price:'Rs. 1,200/hr', emoji:'🏟️', type:'Indoor',
+    owner:'Bikash Rai', ownerEmail:'bikash@example.com', ownerPhone:'+977-9841234567',
     slots:[
       {time:'06:00 AM',status:'booked'}, {time:'08:00 AM',status:'available'},
       {time:'10:00 AM',status:'available'},{time:'12:00 PM',status:'booked'},
@@ -86,6 +87,7 @@ export const venues = [
   },
   {
     id:2, name:'Champions Court',    location:'Lazimpat, Kathmandu',  rating:4.6, price:'Rs. 1,000/hr', emoji:'⚽', type:'Outdoor',
+    owner:'Raj Gurung', ownerEmail:'raj@example.com', ownerPhone:'+977-9842345678',
     slots:[
       {time:'07:00 AM',status:'available'},{time:'09:00 AM',status:'available'},
       {time:'11:00 AM',status:'booked'},  {time:'01:00 PM',status:'available'},
@@ -95,6 +97,7 @@ export const venues = [
   },
   {
     id:3, name:'Goal Zone Futsal',   location:'Thamel, Kathmandu',    rating:4.5, price:'Rs. 1,400/hr', emoji:'🥅', type:'Indoor',
+    owner:'Raman Koirala', ownerEmail:'raman@example.com', ownerPhone:'+977-9843456789',
     slots:[
       {time:'06:00 AM',status:'available'},{time:'08:00 AM',status:'booked'},
       {time:'10:00 AM',status:'booked'},  {time:'12:00 PM',status:'available'},
@@ -104,6 +107,7 @@ export const venues = [
   },
   {
     id:4, name:'Patan Sports Hub',   location:'Patan, Lalitpur',      rating:4.3, price:'Rs. 900/hr',   emoji:'🏆', type:'Outdoor',
+    owner:'Sunita Bajracharya', ownerEmail:'sunita@example.com', ownerPhone:'+977-9844567890',
     slots:[
       {time:'07:00 AM',status:'available'},{time:'09:00 AM',status:'available'},
       {time:'11:00 AM',status:'available'},{time:'01:00 PM',status:'booked'},

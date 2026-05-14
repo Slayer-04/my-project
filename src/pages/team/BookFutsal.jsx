@@ -99,10 +99,11 @@ export default function BookFutsal() {
     setSelectedDayIndex(0)
   }
 
-  const book = (venue, dayLabel, slot) => {
+  const book = (venueObj, dayLabel, slot) => {
     const bookingDate = bookingDays[selectedDayIndex].id
     const teamName = user?.teamInfo?.name || user?.teamInfo?.teamName || user?.teamName || 'My Team'
     const todayId = new Date().toISOString().split('T')[0]
+    const venueName = venueObj.name
 
     if (bookedSlotTimes.has(slot)) {
       toast$(`⛔ ${slot} on ${dayLabel} is already booked.`)
@@ -131,7 +132,7 @@ export default function BookFutsal() {
       {
         id: bookingId,
         team: teamName,
-        venue,
+        venue: venueName,
         date: bookingDate,
         time: slot,
         status: 'pending',
@@ -148,10 +149,13 @@ export default function BookFutsal() {
         type: 'booking_request',
         bookingId,
         team: teamName,
-        venue,
+        venue: venueName,
+        ownerName: venueObj.owner,
+        ownerEmail: venueObj.ownerEmail,
+        ownerPhone: venueObj.ownerPhone,
         date: bookingDate,
         time: slot,
-        message: `${teamName} has requested to book ${venue} on ${dayLabel} at ${slot}`,
+        message: `${teamName} has requested to book ${venueName} on ${dayLabel} at ${slot}`,
         status: 'unread',
         createdAt: new Date().toISOString(),
       },
@@ -283,7 +287,7 @@ export default function BookFutsal() {
                             key={`${bookingVenue.id}-${selectedDayIndex}-${slot.time}`}
                             className={`booking-slot-card ${isBooked ? 'booked' : ''}`}
                             disabled={isBooked}
-                            onClick={() => book(bookingVenue.name, bookingDays[selectedDayIndex].label, slot.time)}
+                            onClick={() => book(bookingVenue, bookingDays[selectedDayIndex].label, slot.time)}
                           >
                             <strong>{slot.time}</strong>
                             <span>{isBooked ? 'Already booked' : 'Tap to book this 1-hour slot'}</span>
