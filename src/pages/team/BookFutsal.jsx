@@ -78,7 +78,7 @@ export default function BookFutsal() {
 
     const bookedTimes = bookings
       .filter(booking => (
-        booking.status !== 'cancelled'
+        booking.status === 'confirmed'
         && booking.venue === bookingVenue.name
         && booking.date === selectedBookingDate
       ))
@@ -159,7 +159,6 @@ export default function BookFutsal() {
     ]))
 
     toast$(`✅ Booking request sent to ${venue} owner for approval!`)
-    closeBookingModal()
   }
 
   const filtered = venues.filter(v =>
