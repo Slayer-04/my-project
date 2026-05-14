@@ -132,14 +132,14 @@ export default function BookFutsal() {
         venue,
         date: bookingDate,
         time: slot,
-        status: 'confirmed',
+        status: 'pending',
         players: 8,
         amount: 'Rs. 1,200',
       },
       ...prev,
     ]))
 
-    toast$(`✅ Slot ${slot} on ${dayLabel} at ${venue} booked successfully!`)
+    toast$(`✅ Booking request sent to ${venue} owner for approval!`)
     closeBookingModal()
   }
 
