@@ -4,12 +4,32 @@ import Topbar  from '../../components/Topbar.jsx'
 import { useAuth } from '../../App.jsx'
 
 export default function Bookings() {
-  const { bookings, setBookings } = useAuth()
+  const { bookings, setBookings, notifications, setNotifications } = useAuth()
   const [detail, setDetail] = useState(null)
   const [toast,  setToast]  = useState('')
   const [filter, setFilter] = useState('All')
 
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+
+  const acceptBooking = (notificationId, bookingId) => {
+    // Update booking status to confirmed
+    setBookings(l => l.map(b => b.id===bookingId ? {...b, status:'confirmed'} : b))
+    
+    // Remove notification
+    setNotifications(n => n.filter(notif => notif.id !== notificationId))
+    
+    toast$('✅ Booking accepted and confirmed!')
+  }
+
+  const declineBooking = (notificationId, bookingId) => {
+    // Update booking status to cancelled
+    setBookings(l => l.map(b => b.id===bookingId ? {...b, status:'cancelled'} : b))
+    
+    // Remove notification
+    setNotifications(n => n.filter(notif => notif.id !== notificationId))
+    
+    toast$('❌ Booking request declined!')
+  }
 
   const confirm = id => {
     setBookings(l => l.map(b => b.id===id ? {...b, status:'confirmed'} : b))
@@ -21,6 +41,9 @@ export default function Bookings() {
   }
 
   const filtered = bookings.filter(b => filter==='All' || b.status===filter.toLowerCase())
+  
+  // Get pending booking request notifications
+  const pendingRequests = notifications.filter(n => n.type === 'booking_request' && n.status === 'unread')
 
   const bdg = s => s==='confirmed'?'success': s==='pending'?'warning':'danger'
 
@@ -49,6 +72,43 @@ export default function Bookings() {
               </div>
             ))}
           </div>
+
+          {/* Pending Booking Requests */}
+          {pendingRequests.length > 0 && (
+            <div className="card anim-3" style={{ backgroundColor:'#fffbf0', borderLeft:'4px solid #ff9800' }}>
+              <div style={{ padding:'16px', display:'flex', flexDirection:'column', gap:12 }}>
+                <h3 style={{ color:'#ff9800', margin:0, display:'flex', alignItems:'center', gap:8 }}>
+                  <i className="fas fa-bell" /> Pending Booking Requests
+                </h3>
+                {pendingRequests.map(req => (
+                  <div key={req.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px', backgroundColor:'white', borderRadius:'8px', border:'1px solid #ffe0b2' }}>
+                    <div>
+                      <div style={{ fontWeight:700, fontSize:14 }}>{req.team} - {req.venue}</div>
+                      <div style={{ fontSize:12, color:'#8a96a8', marginTop:4 }}>
+                        📅 {req.date} at {req.time}
+                      </div>
+                      <div style={{ fontSize:12, color:'#555', marginTop:4 }}>{req.message}</div>
+                    </div>
+                    <div style={{ display:'flex', gap:8 }}>
+                      <button 
+                        className="btn btn-success btn-sm" 
+                        onClick={() => acceptBooking(req.id, req.bookingId)}
+                        style={{ backgroundColor:'var(--green)', borderColor:'var(--green)', color:'white' }}
+                      >
+                        <i className="fas fa-check" /> Accept
+                      </button>
+                      <button 
+                        className="btn btn-danger btn-sm" 
+                        onClick={() => declineBooking(req.id, req.bookingId)}
+                      >
+                        <i className="fas fa-times" /> Decline
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Filter */}
           <div className="filter-bar anim-3">

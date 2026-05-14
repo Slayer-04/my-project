@@ -5,7 +5,7 @@ import { venues } from '../../data/mockData.js'
 import { useAuth } from '../../App.jsx'
 
 export default function BookFutsal() {
-  const { user, bookings, setBookings } = useAuth()
+  const { user, bookings, setBookings, notifications, setNotifications } = useAuth()
   const [q,    setQ]   = useState('')
   const [type, setType]= useState('All')
   const [toast,setToast]= useState('')
@@ -125,9 +125,11 @@ export default function BookFutsal() {
       return
     }
 
+    const bookingId = Date.now()
+
     setBookings(prev => ([
       {
-        id: Date.now(),
+        id: bookingId,
         team: teamName,
         venue,
         date: bookingDate,
@@ -135,6 +137,23 @@ export default function BookFutsal() {
         status: 'pending',
         players: 8,
         amount: 'Rs. 1,200',
+      },
+      ...prev,
+    ]))
+
+    // Send notification to futsal owner
+    setNotifications(prev => ([
+      {
+        id: Date.now(),
+        type: 'booking_request',
+        bookingId,
+        team: teamName,
+        venue,
+        date: bookingDate,
+        time: slot,
+        message: `${teamName} has requested to book ${venue} on ${dayLabel} at ${slot}`,
+        status: 'unread',
+        createdAt: new Date().toISOString(),
       },
       ...prev,
     ]))
