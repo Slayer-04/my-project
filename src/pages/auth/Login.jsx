@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
-import { futsalPartners } from '../../data/mockData.js'
+import { futsalPartners, teams as mockTeams } from '../../data/mockData.js'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 
@@ -36,30 +36,48 @@ export default function Login() {
 
     const loadTeams = async () => {
       try {
-        const response = await fetch(`${API_BASE}/teams`)
-        const data = await response.json()
+        // First try to fetch from API
+        try {
+          const response = await fetch(`${API_BASE}/teams`)
+          const data = await response.json()
 
-        if (!response.ok || !Array.isArray(data)) {
-          throw new Error('Failed to load team accounts')
+          if (response.ok && Array.isArray(data)) {
+            const sorted = data
+              .map((team, index) => ({
+                id: team._id || team.id || `team-${index + 1}`,
+                email: team.email || '',
+                captainName: team.captainName || 'Team User',
+                label: team.teamName || team.name || team.captainName || team.email || `Team ${index + 1}`,
+              }))
+              .filter(team => team.email)
+              .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }))
+
+            if (!active) return
+            setTeamOptions(sorted)
+            setF(prev => (prev.email || sorted.length === 0 ? prev : { ...prev, email: sorted[0].email }))
+            return
+          }
+        } catch (_apiError) {
+          // Fall through to use mock data
         }
 
-        const sorted = data
+        // Use mock data as fallback
+        const sorted = mockTeams
           .map((team, index) => ({
-            id: team._id || team.id || `team-${index + 1}`,
-            email: team.email || '',
-            captainName: team.captainName || 'Team User',
-            label: team.teamName || team.name || team.captainName || team.email || `Team ${index + 1}`,
+            id: team.id,
+            email: `team${team.id}@fotmatch.com`,
+            captainName: 'Team User',
+            label: team.name,
           }))
-          .filter(team => team.email)
           .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }))
 
         if (!active) return
-
         setTeamOptions(sorted)
         setF(prev => (prev.email || sorted.length === 0 ? prev : { ...prev, email: sorted[0].email }))
       } catch (_error) {
         if (!active) return
-        setErr('Unable to load team accounts right now.')
+        // Still provide access to demo accounts even if loading fails
+        setTeamOptions([])
       }
     }
 
@@ -158,39 +176,75 @@ export default function Login() {
 
     setLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/teams/email/${encodeURIComponent(normalizedEmail)}`)
-      const data = await response.json()
+      // Try API first
+      try {
+        const response = await fetch(`${API_BASE}/teams/email/${encodeURIComponent(normalizedEmail)}`)
+        const data = await response.json()
 
-      if (!response.ok) {
-        setErr(data.message || 'Team account not found. Use a seeded team email or register first.')
+        if (response.ok) {
+          setUser({
+            id: data._id,
+            name: data.captainName,
+            email: data.email,
+            role: 'team',
+            teamProfileCompleted: data.teamProfileCompleted,
+            eloRating: data.eloRating,
+            eloMatchesPlayed: data.eloMatchesPlayed || 0,
+            teamName: data.teamName || '',
+            teamInfo: {
+              name: data.teamName || '',
+              teamName: data.teamName || '',
+              location: data.location || '',
+              skill: data.skill || 'Intermediate',
+              lat: data.lat,
+              lng: data.lng,
+              preferredDay: data.preferredDay || 'Saturday',
+              preferredTime: data.preferredTime || '06:00 PM',
+              currentElo: data.eloRating,
+            },
+          })
+
+          navigate(data.teamProfileCompleted ? '/team' : '/team/profile')
+          return
+        }
+      } catch (_apiError) {
+        // Fall through to use mock data
+      }
+
+      // Use mock data fallback
+      const selectedTeam = teamOptions.find(team => team.email === normalizedEmail)
+      
+      if (!selectedTeam) {
+        setErr('Team account not found. Please select a team from the list.')
+        setLoading(false)
         return
       }
 
       setUser({
-        id: data._id,
-        name: data.captainName,
-        email: data.email,
+        id: selectedTeam.id,
+        name: selectedTeam.captainName,
+        email: selectedTeam.email,
         role: 'team',
-        teamProfileCompleted: data.teamProfileCompleted,
-        eloRating: data.eloRating,
-        eloMatchesPlayed: data.eloMatchesPlayed || 0,
-        teamName: data.teamName || '',
+        teamProfileCompleted: true,
+        eloRating: 1500,
+        eloMatchesPlayed: 0,
+        teamName: selectedTeam.label || '',
         teamInfo: {
-          name: data.teamName || '',
-          teamName: data.teamName || '',
-          location: data.location || '',
-          skill: data.skill || 'Intermediate',
-          lat: data.lat,
-          lng: data.lng,
-          preferredDay: data.preferredDay || 'Saturday',
-          preferredTime: data.preferredTime || '06:00 PM',
-          currentElo: data.eloRating,
+          name: selectedTeam.label || '',
+          teamName: selectedTeam.label || '',
+          location: 'Kathmandu',
+          skill: 'Intermediate',
+          lat: 27.7172,
+          lng: 85.3240,
+          preferredDay: 'Saturday',
+          preferredTime: '06:00 PM',
+          currentElo: 1500,
         },
       })
 
-      navigate(data.teamProfileCompleted ? '/team' : '/team/profile')
+      navigate('/team')
     } catch (_error) {
-      setErr('Unable to connect to server. Please try again.')
+      setErr('Unable to process login. Please try again.')
     } finally {
       setLoading(false)
     }

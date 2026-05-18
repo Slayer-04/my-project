@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
 import { useAuth } from '../../App.jsx'
+import { onBookingCreated, onBookingUpdated, onBookingCancelled } from '../../utils/socketService.js'
 
 export default function Bookings() {
   const { bookings, setBookings, notifications, setNotifications } = useAuth()
@@ -10,6 +11,47 @@ export default function Bookings() {
   const [filter, setFilter] = useState('All')
 
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+
+  // Listen for real-time booking updates from other users
+  useEffect(() => {
+    // Listen for new bookings from other team members
+    onBookingCreated((bookingData) => {
+      console.log('[Bookings] Received booking:created event:', bookingData)
+      
+      // Check if this booking is not already in our list (avoid duplicates)
+      const bookingExists = bookings.some(b => b.id === bookingData.id)
+      if (!bookingExists) {
+        setBookings(prev => [bookingData, ...prev])
+        toast$(`📌 New booking received: ${bookingData.team} at ${bookingData.venue}`)
+      }
+    })
+
+    // Listen for booking updates (status changes)
+    onBookingUpdated((updateData) => {
+      console.log('[Bookings] Received booking:updated event:', updateData)
+      
+      setBookings(prev => 
+        prev.map(b => b.id === updateData.id ? { ...b, ...updateData } : b)
+      )
+      toast$(`✏️ Booking updated: ${updateData.venue}`)
+    })
+
+    // Listen for booking cancellations
+    onBookingCancelled((cancelData) => {
+      console.log('[Bookings] Received booking:cancelled event:', cancelData)
+      
+      setBookings(prev => 
+        prev.map(b => b.id === cancelData.id ? { ...b, status: 'cancelled' } : b)
+      )
+      toast$(`❌ Booking cancelled: ${cancelData.venue}`)
+    })
+
+    // Cleanup listeners on unmount
+    return () => {
+      // Optional: Remove specific listeners if needed
+      // removeListener('booking:created')
+    }
+  }, [bookings, setBookings])
 
   const acceptBooking = (notificationId, bookingId) => {
     // Get the booking being accepted

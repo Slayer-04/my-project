@@ -3,6 +3,7 @@ import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
 import { venues } from '../../data/mockData.js'
 import { useAuth } from '../../App.jsx'
+import { emitBookingCreate } from '../../utils/socketService.js'
 
 export default function BookFutsal() {
   const { user, bookings, setBookings, notifications, setNotifications } = useAuth()
@@ -169,6 +170,19 @@ export default function BookFutsal() {
       },
       ...prev,
     ]))
+
+    // Emit booking event to all connected users via WebSocket
+    emitBookingCreate({
+      id: bookingId,
+      team: teamName,
+      venue: venueName,
+      date: bookingDate,
+      time: slot,
+      status: 'pending',
+      players: 8,
+      amount: 'Rs. 1,200',
+      email: user?.email,
+    })
 
     // Send notification to futsal owner
     setNotifications(prev => ([

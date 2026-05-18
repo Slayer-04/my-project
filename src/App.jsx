@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useState } from 'react'
+import React, { createContext, useContext, useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { bookings as seedBookings } from './data/mockData.js'
 import { challenges as seedChallenges } from './data/mockData.js'
+import { initSocket, emitUserJoin, disconnectSocket } from './utils/socketService.js'
 
 /* ── Auth ──────────────────────────────── */
 import Login    from './pages/auth/Login.jsx'
@@ -167,6 +168,28 @@ export default function App() {
       return resolvedPosts
     })
   }
+
+  // Initialize WebSocket when user logs in
+  useEffect(() => {
+    if (user) {
+      // Initialize socket connection
+      initSocket()
+      
+      // Notify server about user join
+      emitUserJoin(user)
+      
+      console.log(`✅ App: User logged in - ${user.email} (${user.role})`)
+    } else {
+      // Disconnect when user logs out
+      disconnectSocket()
+    }
+
+    // Cleanup on unmount
+    return () => {
+      // Optional: Keep connection alive even if component unmounts
+      // Only disconnect on actual logout (handled above)
+    }
+  }, [user])
 
   return (
     <AuthContext.Provider value={{
