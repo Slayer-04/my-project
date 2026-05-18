@@ -4,14 +4,49 @@ import Topbar  from '../../components/Topbar.jsx'
 import { useAuth } from '../../App.jsx'
 import { onBookingCreated, onBookingUpdated, onBookingCancelled } from '../../utils/socketService.js'
 
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+
+const mapBookingFromApi = booking => ({
+  ...booking,
+  id: booking.id || booking._id,
+  venue: booking.venueId?.name || booking.venue,
+})
+
 export default function Bookings() {
   const { user, bookings, setBookings, notifications, setNotifications } = useAuth()
   const [detail, setDetail] = useState(null)
   const [toast,  setToast]  = useState('')
   const [filter, setFilter] = useState('All')
   const ownerVenueName = (user?.venueName || '').trim()
+  const ownerEmail = (user?.email || '').trim().toLowerCase()
+  const ownerName = (user?.name || '').trim()
 
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+
+  const refreshOwnerBookings = async () => {
+    try {
+      const params = new URLSearchParams()
+      if (ownerEmail) params.set('ownerEmail', ownerEmail)
+      if (ownerName) params.set('ownerName', ownerName)
+      if (ownerVenueName) params.set('venue', ownerVenueName)
+
+      if (![...params.keys()].length) return
+
+      const response = await fetch(`${API_BASE}/bookings/owner?${params.toString()}`)
+      if (!response.ok) return
+
+      const data = await response.json()
+      if (!Array.isArray(data)) return
+
+      setBookings(data.map(mapBookingFromApi))
+    } catch (_error) {
+      // Keep current local state if API call fails.
+    }
+  }
+
+  useEffect(() => {
+    refreshOwnerBookings()
+  }, [ownerEmail, ownerName, ownerVenueName])
 
   // Listen for real-time booking updates from other users
   useEffect(() => {
@@ -71,7 +106,7 @@ export default function Bookings() {
     ))
   )
 
-  const acceptBooking = (notificationId, bookingId) => {
+  const acceptBooking = async (notificationId, bookingId) => {
     const acceptedBooking = bookings.find(b => b.id === bookingId)
     if (!acceptedBooking) {
       toast$('⛔ Booking not found.')
@@ -84,30 +119,28 @@ export default function Bookings() {
     }
 
     if (hasConfirmedConflict(acceptedBooking, bookingId)) {
-      setBookings(prevBookings => prevBookings.map(b => (
-        b.id === bookingId ? { ...b, status: 'cancelled' } : b
-      )))
-      setNotifications(prevNotifications => prevNotifications.filter(notif => notif.id !== notificationId))
       toast$('⛔ This slot is already confirmed. Duplicate acceptance blocked.')
       return
     }
-    
-    // Update booking status to confirmed and auto-reject conflicting pending bookings
-    setBookings(prevBookings => 
-      prevBookings.map(b => {
-        if (b.id === bookingId) {
-          return {...b, status:'confirmed'}
-        }
-        // Auto-reject other pending bookings for the same time slot
-        if (b.status === 'pending' 
-            && b.venue === acceptedBooking.venue
-            && b.date === acceptedBooking.date
-            && b.time === acceptedBooking.time) {
-          return {...b, status:'cancelled'}
-        }
-        return b
+
+    try {
+      const response = await fetch(`${API_BASE}/bookings/${bookingId}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerEmail, ownerName }),
       })
-    )
+
+      const result = await response.json()
+      if (!response.ok) {
+        toast$(`⛔ ${result.message || 'Failed to confirm booking.'}`)
+        return
+      }
+
+      await refreshOwnerBookings()
+    } catch (_error) {
+      toast$('⛔ Could not connect to booking server. Please try again.')
+      return
+    }
     
     // Remove notification and auto-reject notifications for conflicting bookings
     setNotifications(prevNotifications => 
@@ -129,15 +162,31 @@ export default function Bookings() {
     toast$('✅ Booking accepted! Other conflicting bookings auto-rejected.')
   }
 
-  const declineBooking = (notificationId, bookingId) => {
+  const declineBooking = async (notificationId, bookingId) => {
     const targetBooking = bookings.find(b => b.id === bookingId)
     if (targetBooking && ownerVenueName && targetBooking.venue !== ownerVenueName) {
       toast$('⛔ You can only decline bookings for your own futsal.')
       return
     }
 
-    // Update booking status to cancelled
-    setBookings(l => l.map(b => b.id===bookingId ? {...b, status:'cancelled'} : b))
+    try {
+      const response = await fetch(`${API_BASE}/bookings/${bookingId}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerEmail, ownerName }),
+      })
+
+      const result = await response.json()
+      if (!response.ok) {
+        toast$(`⛔ ${result.message || 'Failed to decline booking.'}`)
+        return
+      }
+
+      await refreshOwnerBookings()
+    } catch (_error) {
+      toast$('⛔ Could not connect to booking server. Please try again.')
+      return
+    }
     
     // Remove notification
     setNotifications(n => n.filter(notif => notif.id !== notificationId))
@@ -145,7 +194,7 @@ export default function Bookings() {
     toast$('❌ Booking request declined!')
   }
 
-  const confirm = id => {
+  const confirm = async id => {
     const confirmedBooking = bookings.find(b => b.id === id)
     if (!confirmedBooking) {
       toast$('⛔ Booking not found.')
@@ -158,35 +207,57 @@ export default function Bookings() {
     }
 
     if (hasConfirmedConflict(confirmedBooking, id)) {
-      setBookings(l => l.map(b => (
-        b.id === id ? { ...b, status: 'cancelled' } : b
-      )))
       toast$('⛔ This slot is already confirmed. Duplicate acceptance blocked.')
       return
     }
-    
-    // Update booking status and auto-reject conflicting pending bookings
-    setBookings(l => l.map(b => {
-      if (b.id === id) return {...b, status:'confirmed'}
-      // Auto-reject other pending bookings for the same time slot
-      if (b.status === 'pending' 
-          && b.venue === confirmedBooking.venue
-          && b.date === confirmedBooking.date
-          && b.time === confirmedBooking.time) {
-        return {...b, status:'cancelled'}
+
+    try {
+      const response = await fetch(`${API_BASE}/bookings/${id}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerEmail, ownerName }),
+      })
+
+      const result = await response.json()
+      if (!response.ok) {
+        toast$(`⛔ ${result.message || 'Failed to confirm booking.'}`)
+        return
       }
-      return b
-    }))
+
+      await refreshOwnerBookings()
+    } catch (_error) {
+      toast$('⛔ Could not connect to booking server. Please try again.')
+      return
+    }
+
     toast$('✅ Booking confirmed! Other conflicting bookings auto-rejected.')
   }
-  const cancel = id => {
+  const cancel = async id => {
     const targetBooking = bookings.find(b => b.id === id)
     if (targetBooking && ownerVenueName && targetBooking.venue !== ownerVenueName) {
       toast$('⛔ You can only cancel bookings for your own futsal.')
       return
     }
 
-    setBookings(l => l.map(b => b.id===id ? {...b, status:'cancelled'} : b))
+    try {
+      const response = await fetch(`${API_BASE}/bookings/${id}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerEmail, ownerName }),
+      })
+
+      const result = await response.json()
+      if (!response.ok) {
+        toast$(`⛔ ${result.message || 'Failed to cancel booking.'}`)
+        return
+      }
+
+      await refreshOwnerBookings()
+    } catch (_error) {
+      toast$('⛔ Could not connect to booking server. Please try again.')
+      return
+    }
+
     setDetail(null)
   }
 

@@ -51,7 +51,11 @@ Tracks futsal court bookings made by teams.
 {
   _id: ObjectId,
   team: String (required, team name),
+  teamEmail: String,
+  venueId: ObjectId (reference to Venue),
   venue: String (required),
+  ownerName: String,
+  ownerEmail: String,
   date: String (required, format: YYYY-MM-DD),
   time: String (required, format: HH:MM AM/PM),
   status: Enum['confirmed', 'pending', 'cancelled'] (default: 'pending'),
@@ -68,7 +72,10 @@ Tracks futsal court bookings made by teams.
 **API Endpoints:**
 - `GET /api/bookings` - Get all bookings
 - `GET /api/bookings/team/:teamName` - Get bookings for a specific team
+- `GET /api/bookings/owner?ownerEmail=...` - Get bookings for a venue owner
 - `POST /api/bookings` - Create new booking
+- `POST /api/bookings/:id/confirm` - Confirm booking (owner-scoped, auto-cancels conflicting pending slots)
+- `POST /api/bookings/:id/cancel` - Cancel booking (owner-scoped)
 - `PATCH /api/bookings/:id` - Update booking
 - `DELETE /api/bookings/:id` - Cancel booking
 

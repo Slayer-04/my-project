@@ -1,9 +1,17 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
 import { venues } from '../../data/mockData.js'
 import { useAuth } from '../../App.jsx'
 import { emitBookingCreate } from '../../utils/socketService.js'
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+
+const mapBookingFromApi = booking => ({
+  ...booking,
+  id: booking.id || booking._id,
+  venue: booking.venueId?.name || booking.venue,
+})
 
 export default function BookFutsal() {
   const { user, bookings, setBookings, notifications, setNotifications } = useAuth()
@@ -14,6 +22,30 @@ export default function BookFutsal() {
   const [selectedDayIndex, setSelectedDayIndex] = useState(0)
 
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+
+  useEffect(() => {
+    let active = true
+
+    const loadBookings = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/bookings`)
+        if (!response.ok) return
+
+        const data = await response.json()
+        if (!active || !Array.isArray(data)) return
+
+        setBookings(data.map(mapBookingFromApi))
+      } catch (_error) {
+        // Keep existing local data when API is unavailable.
+      }
+    }
+
+    loadBookings()
+
+    return () => {
+      active = false
+    }
+  }, [setBookings])
 
   const bookingDays = useMemo(() => {
     const dayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'long' })
@@ -116,7 +148,7 @@ export default function BookFutsal() {
     setSelectedDayIndex(0)
   }
 
-  const book = (venueObj, dayLabel, slot) => {
+  const book = async (venueObj, dayLabel, slot) => {
     const bookingDate = bookingDays[selectedDayIndex].id
     const teamName = user?.teamInfo?.name || user?.teamInfo?.teamName || user?.teamName || 'My Team'
     const todayId = new Date().toISOString().split('T')[0]
@@ -167,32 +199,52 @@ export default function BookFutsal() {
       return
     }
 
-    const bookingId = Date.now()
+    let bookingRecord = null
 
-    setBookings(prev => ([
-      {
-        id: bookingId,
-        team: teamName,
-        venue: venueName,
-        date: bookingDate,
-        time: slot,
-        status: 'pending',
-        players: 8,
-        amount: 'Rs. 1,200',
-      },
-      ...prev,
-    ]))
+    try {
+      const response = await fetch(`${API_BASE}/bookings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          team: teamName,
+          teamEmail: user?.email || '',
+          venue: venueName,
+          venueId: venueObj._id || null,
+          ownerName: venueObj.owner || '',
+          ownerEmail: venueObj.ownerEmail || '',
+          date: bookingDate,
+          time: slot,
+          players: 8,
+          amount: 'Rs. 1,200',
+        }),
+      })
+
+      const result = await response.json()
+      if (!response.ok) {
+        toast$(`⛔ ${result.message || 'Booking request failed.'}`)
+        return
+      }
+
+      bookingRecord = mapBookingFromApi(result.booking)
+      setBookings(prev => {
+        const withoutDuplicate = prev.filter(b => b.id !== bookingRecord.id)
+        return [bookingRecord, ...withoutDuplicate]
+      })
+    } catch (_error) {
+      toast$('⛔ Could not connect to booking server. Please try again.')
+      return
+    }
 
     // Emit booking event to all connected users via WebSocket
     emitBookingCreate({
-      id: bookingId,
-      team: teamName,
-      venue: venueName,
-      date: bookingDate,
-      time: slot,
-      status: 'pending',
-      players: 8,
-      amount: 'Rs. 1,200',
+      id: bookingRecord.id,
+      team: bookingRecord.team,
+      venue: bookingRecord.venue,
+      date: bookingRecord.date,
+      time: bookingRecord.time,
+      status: bookingRecord.status,
+      players: bookingRecord.players,
+      amount: bookingRecord.amount,
       email: user?.email,
     })
 
@@ -201,7 +253,7 @@ export default function BookFutsal() {
       {
         id: Date.now(),
         type: 'booking_request',
-        bookingId,
+        bookingId: bookingRecord.id,
         team: teamName,
         venue: venueName,
         ownerName: venueObj.owner,

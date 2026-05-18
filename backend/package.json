@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "seed:game-data": "node src/scripts/seedGameData.js",
     "seed:teams": "node src/scripts/seedNepaliTeams.js",
+    "migrate:bookings": "node src/scripts/backfillBookingVenueData.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

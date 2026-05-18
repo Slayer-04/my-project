@@ -21,6 +21,7 @@ const VenueSchema = new mongoose.Schema(
       close: { type: String, default: '22:00' },
     },
     owner: { type: String, default: '', trim: true },
+    ownerEmail: { type: String, default: '', trim: true },
     contactPhone: { type: String, default: '', trim: true },
     amenities: [{ type: String }],
     availability: {

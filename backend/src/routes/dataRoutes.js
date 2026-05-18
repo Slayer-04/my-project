@@ -9,6 +9,18 @@ const MatchResult = require('../models/MatchResult')
 
 const router = express.Router()
 
+const norm = value => (typeof value === 'string' ? value.trim() : '')
+
+const getSlotQuery = booking => {
+  if (booking.venueId) {
+    return { venueId: booking.venueId, date: booking.date, time: booking.time }
+  }
+
+  return { venue: booking.venue, date: booking.date, time: booking.time }
+}
+
+const sameEmail = (left, right) => norm(left).toLowerCase() === norm(right).toLowerCase()
+
 /* ────────────────────────────────────────────────────────────────── */
 /* BOOKINGS ROUTES                                                    */
 /* ────────────────────────────────────────────────────────────────── */
@@ -35,25 +47,121 @@ router.get('/bookings/team/:teamName', async (req, res) => {
   }
 })
 
+router.get('/bookings/owner', async (req, res) => {
+  try {
+    const ownerEmail = norm(req.query.ownerEmail).toLowerCase()
+    const ownerName = norm(req.query.ownerName)
+    const venue = norm(req.query.venue)
+    const venueId = norm(req.query.venueId)
+
+    if (!ownerEmail && !ownerName && !venue && !venueId) {
+      return res.status(400).json({ message: 'ownerEmail, ownerName, venue, or venueId is required.' })
+    }
+
+    const query = {}
+    if (venueId) query.venueId = venueId
+    if (venue) query.venue = venue
+    if (ownerEmail) query.ownerEmail = ownerEmail
+    if (ownerName) query.ownerName = ownerName
+
+    const bookings = await Booking.find(query)
+      .populate('challengeId')
+      .populate('venueId')
+      .sort({ createdAt: -1 })
+
+    return res.json(bookings)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch owner bookings.', error: error.message })
+  }
+})
+
 router.post('/bookings', async (req, res) => {
   try {
-    const { team, venue, date, time, status, players, amount, opponent, challengeId, note } = req.body
+    const {
+      team,
+      teamEmail,
+      venue,
+      venueId,
+      ownerName,
+      ownerEmail,
+      date,
+      time,
+      status,
+      players,
+      amount,
+      opponent,
+      challengeId,
+      note,
+    } = req.body
 
     if (!team || !venue || !date || !time) {
       return res.status(400).json({ message: 'team, venue, date, time are required.' })
     }
 
+    if (status === 'confirmed') {
+      return res.status(400).json({ message: 'New bookings must start in pending state.' })
+    }
+
+    const normalizedTeam = norm(team)
+    const normalizedVenue = norm(venue)
+    const normalizedDate = norm(date)
+    const normalizedTime = norm(time)
+
+    let linkedVenue = null
+    if (venueId) {
+      linkedVenue = await Venue.findById(venueId)
+    }
+    if (!linkedVenue && normalizedVenue) {
+      linkedVenue = await Venue.findOne({ name: normalizedVenue })
+    }
+
+    const resolvedVenueId = linkedVenue ? linkedVenue._id : (venueId || null)
+    const resolvedVenueName = linkedVenue ? linkedVenue.name : normalizedVenue
+    const resolvedOwnerName = norm(ownerName) || norm(linkedVenue?.owner)
+    const resolvedOwnerEmail = norm(ownerEmail).toLowerCase() || norm(linkedVenue?.ownerEmail).toLowerCase()
+
+    const confirmedConflict = await Booking.findOne({
+      ...(resolvedVenueId
+        ? { venueId: resolvedVenueId }
+        : { venue: resolvedVenueName }),
+      date: normalizedDate,
+      time: normalizedTime,
+      status: 'confirmed',
+    })
+
+    if (confirmedConflict) {
+      return res.status(409).json({ message: 'This slot is already confirmed for this venue.' })
+    }
+
+    const pendingDuplicate = await Booking.findOne({
+      ...(resolvedVenueId
+        ? { venueId: resolvedVenueId }
+        : { venue: resolvedVenueName }),
+      date: normalizedDate,
+      time: normalizedTime,
+      team: normalizedTeam,
+      status: 'pending',
+    })
+
+    if (pendingDuplicate) {
+      return res.status(409).json({ message: 'You already have a pending booking for this slot.' })
+    }
+
     const booking = await Booking.create({
-      team: team.trim(),
-      venue: venue.trim(),
-      date: date.trim(),
-      time: time.trim(),
-      status: status || 'pending',
+      team: normalizedTeam,
+      teamEmail: norm(teamEmail).toLowerCase(),
+      venueId: resolvedVenueId,
+      venue: resolvedVenueName,
+      ownerName: resolvedOwnerName,
+      ownerEmail: resolvedOwnerEmail,
+      date: normalizedDate,
+      time: normalizedTime,
+      status: 'pending',
       players: players || 11,
       amount: amount || 'Rs. 1,200',
-      opponent: opponent ? opponent.trim() : '',
+      opponent: opponent ? norm(opponent) : '',
       challengeId: challengeId || null,
-      note: note ? note.trim() : '',
+      note: note ? norm(note) : '',
     })
 
     return res.status(201).json({ message: 'Booking created successfully.', booking })
@@ -62,13 +170,105 @@ router.post('/bookings', async (req, res) => {
   }
 })
 
+router.post('/bookings/:id/confirm', async (req, res) => {
+  try {
+    const ownerEmail = norm(req.body.ownerEmail).toLowerCase()
+    const ownerName = norm(req.body.ownerName)
+
+    const booking = await Booking.findById(req.params.id)
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found.' })
+    }
+
+    if (ownerEmail && booking.ownerEmail && !sameEmail(booking.ownerEmail, ownerEmail)) {
+      return res.status(403).json({ message: 'You can only confirm bookings for your own venue.' })
+    }
+
+    if (ownerName && booking.ownerName && norm(booking.ownerName).toLowerCase() !== ownerName.toLowerCase()) {
+      return res.status(403).json({ message: 'You can only confirm bookings for your own venue.' })
+    }
+
+    if (booking.status === 'confirmed') {
+      return res.json({ message: 'Booking already confirmed.', booking })
+    }
+
+    const slotQuery = getSlotQuery(booking)
+    const conflict = await Booking.findOne({
+      ...slotQuery,
+      status: 'confirmed',
+      _id: { $ne: booking._id },
+    })
+
+    if (conflict) {
+      return res.status(409).json({ message: 'This slot has already been confirmed for this venue.' })
+    }
+
+    booking.status = 'confirmed'
+    await booking.save()
+
+    const cancelResult = await Booking.updateMany(
+      {
+        ...slotQuery,
+        status: 'pending',
+        _id: { $ne: booking._id },
+      },
+      { $set: { status: 'cancelled' } }
+    )
+
+    return res.json({
+      message: 'Booking confirmed successfully.',
+      booking,
+      autoCancelledCount: cancelResult.modifiedCount || 0,
+    })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to confirm booking.', error: error.message })
+  }
+})
+
+router.post('/bookings/:id/cancel', async (req, res) => {
+  try {
+    const ownerEmail = norm(req.body.ownerEmail).toLowerCase()
+    const ownerName = norm(req.body.ownerName)
+
+    const booking = await Booking.findById(req.params.id)
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found.' })
+    }
+
+    if (ownerEmail && booking.ownerEmail && !sameEmail(booking.ownerEmail, ownerEmail)) {
+      return res.status(403).json({ message: 'You can only cancel bookings for your own venue.' })
+    }
+
+    if (ownerName && booking.ownerName && norm(booking.ownerName).toLowerCase() !== ownerName.toLowerCase()) {
+      return res.status(403).json({ message: 'You can only cancel bookings for your own venue.' })
+    }
+
+    if (booking.status === 'cancelled') {
+      return res.json({ message: 'Booking already cancelled.', booking })
+    }
+
+    booking.status = 'cancelled'
+    await booking.save()
+
+    return res.json({ message: 'Booking cancelled successfully.', booking })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to cancel booking.', error: error.message })
+  }
+})
+
 router.patch('/bookings/:id', async (req, res) => {
   try {
+    if (req.body?.status === 'confirmed') {
+      return res.status(400).json({ message: 'Use POST /bookings/:id/confirm to confirm a booking.' })
+    }
+
     const booking = await Booking.findByIdAndUpdate(
       req.params.id,
       { $set: req.body },
       { new: true, runValidators: true }
-    ).populate('challengeId')
+    )
+      .populate('challengeId')
+      .populate('venueId')
 
     if (!booking) {
       return res.status(404).json({ message: 'Booking not found.' })
@@ -293,7 +493,7 @@ router.get('/venues', async (_req, res) => {
 
 router.post('/venues', async (req, res) => {
   try {
-    const { name, location, rating, price, type, courts, pricePerHour, lat, lng, owner } = req.body
+    const { name, location, rating, price, type, courts, pricePerHour, lat, lng, owner, ownerEmail } = req.body
 
     if (!name || !location || !rating || !type || !courts) {
       return res.status(400).json({ message: 'name, location, rating, type, courts are required.' })
@@ -310,6 +510,7 @@ router.post('/venues', async (req, res) => {
       lat: lat || null,
       lng: lng || null,
       owner: owner ? owner.trim() : '',
+      ownerEmail: ownerEmail ? ownerEmail.trim().toLowerCase() : '',
     })
 
     return res.status(201).json({ message: 'Venue created successfully.', venue })
