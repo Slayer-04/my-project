@@ -102,7 +102,9 @@ export default function BookFutsal() {
     return new Set(pendingTimes)
   }, [bookingVenue, bookings, selectedBookingDate])
 
-  const openSlotCount = openSlotsForVenue.filter(slot => !bookedSlotTimes.has(slot.time)).length
+  const openSlotCount = openSlotsForVenue.filter(slot => (
+    !bookedSlotTimes.has(slot.time) && !pendingSlotTimes.has(slot.time)
+  )).length
 
   const openBookingModal = venue => {
     setBookingVenue(venue)
@@ -125,17 +127,27 @@ export default function BookFutsal() {
       return
     }
 
-    // Check for existing pending booking from same team for same slot
     const hasPendingBooking = bookings.some(booking => (
       booking.status === 'pending'
-      && booking.team === teamName
       && booking.venue === venueName
       && booking.date === bookingDate
       && booking.time === slot
     ))
 
     if (hasPendingBooking) {
-      toast$(`⛔ You already have a pending booking for ${slot} on ${dayLabel}.`)
+      toast$(`⏳ ${slot} on ${dayLabel} is pending owner confirmation.`)
+      return
+    }
+
+    const hasConfirmedBooking = bookings.some(booking => (
+      booking.status === 'confirmed'
+      && booking.venue === venueName
+      && booking.date === bookingDate
+      && booking.time === slot
+    ))
+
+    if (hasConfirmedBooking) {
+      toast$(`⛔ ${slot} on ${dayLabel} is already confirmed for another team.`)
       return
     }
 
@@ -149,7 +161,7 @@ export default function BookFutsal() {
       }
     }
 
-    const confirmed = window.confirm(`Confirm booking for ${dayLabel} at ${slot} in ${venue}?`)
+    const confirmed = window.confirm(`Confirm booking for ${dayLabel} at ${slot} in ${venueName}?`)
 
     if (!confirmed) {
       return
@@ -204,7 +216,7 @@ export default function BookFutsal() {
       ...prev,
     ]))
 
-    toast$(`✅ Booking request sent to ${venue} owner for approval!`)
+    toast$(`✅ Booking request sent to ${venueName} owner for approval!`)
   }
 
   const filtered = venues.filter(v =>

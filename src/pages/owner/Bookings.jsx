@@ -5,10 +5,11 @@ import { useAuth } from '../../App.jsx'
 import { onBookingCreated, onBookingUpdated, onBookingCancelled } from '../../utils/socketService.js'
 
 export default function Bookings() {
-  const { bookings, setBookings, notifications, setNotifications } = useAuth()
+  const { user, bookings, setBookings, notifications, setNotifications } = useAuth()
   const [detail, setDetail] = useState(null)
   const [toast,  setToast]  = useState('')
   const [filter, setFilter] = useState('All')
+  const ownerVenueName = (user?.venueName || '').trim()
 
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
@@ -17,13 +18,18 @@ export default function Bookings() {
     // Listen for new bookings from other team members
     onBookingCreated((bookingData) => {
       console.log('[Bookings] Received booking:created event:', bookingData)
-      
-      // Check if this booking is not already in our list (avoid duplicates)
-      const bookingExists = bookings.some(b => b.id === bookingData.id)
-      if (!bookingExists) {
-        setBookings(prev => [bookingData, ...prev])
-        toast$(`📌 New booking received: ${bookingData.team} at ${bookingData.venue}`)
+
+      if (ownerVenueName && bookingData.venue !== ownerVenueName) {
+        return
       }
+      
+      setBookings(prev => {
+        const bookingExists = prev.some(b => b.id === bookingData.id)
+        if (bookingExists) return prev
+
+        toast$(`📌 New booking received: ${bookingData.team} at ${bookingData.venue}`)
+        return [bookingData, ...prev]
+      })
     })
 
     // Listen for booking updates (status changes)
@@ -51,11 +57,40 @@ export default function Bookings() {
       // Optional: Remove specific listeners if needed
       // removeListener('booking:created')
     }
-  }, [bookings, setBookings])
+  }, [ownerVenueName, setBookings])
+
+  const ownerBookings = bookings.filter(b => !ownerVenueName || b.venue === ownerVenueName)
+
+  const hasConfirmedConflict = (targetBooking, ignoreBookingId) => (
+    bookings.some(b => (
+      b.status === 'confirmed'
+      && b.id !== ignoreBookingId
+      && b.venue === targetBooking.venue
+      && b.date === targetBooking.date
+      && b.time === targetBooking.time
+    ))
+  )
 
   const acceptBooking = (notificationId, bookingId) => {
-    // Get the booking being accepted
     const acceptedBooking = bookings.find(b => b.id === bookingId)
+    if (!acceptedBooking) {
+      toast$('⛔ Booking not found.')
+      return
+    }
+
+    if (ownerVenueName && acceptedBooking.venue !== ownerVenueName) {
+      toast$('⛔ You can only accept bookings for your own futsal.')
+      return
+    }
+
+    if (hasConfirmedConflict(acceptedBooking, bookingId)) {
+      setBookings(prevBookings => prevBookings.map(b => (
+        b.id === bookingId ? { ...b, status: 'cancelled' } : b
+      )))
+      setNotifications(prevNotifications => prevNotifications.filter(notif => notif.id !== notificationId))
+      toast$('⛔ This slot is already confirmed. Duplicate acceptance blocked.')
+      return
+    }
     
     // Update booking status to confirmed and auto-reject conflicting pending bookings
     setBookings(prevBookings => 
@@ -95,6 +130,12 @@ export default function Bookings() {
   }
 
   const declineBooking = (notificationId, bookingId) => {
+    const targetBooking = bookings.find(b => b.id === bookingId)
+    if (targetBooking && ownerVenueName && targetBooking.venue !== ownerVenueName) {
+      toast$('⛔ You can only decline bookings for your own futsal.')
+      return
+    }
+
     // Update booking status to cancelled
     setBookings(l => l.map(b => b.id===bookingId ? {...b, status:'cancelled'} : b))
     
@@ -105,8 +146,24 @@ export default function Bookings() {
   }
 
   const confirm = id => {
-    // Get the booking being confirmed
     const confirmedBooking = bookings.find(b => b.id === id)
+    if (!confirmedBooking) {
+      toast$('⛔ Booking not found.')
+      return
+    }
+
+    if (ownerVenueName && confirmedBooking.venue !== ownerVenueName) {
+      toast$('⛔ You can only confirm bookings for your own futsal.')
+      return
+    }
+
+    if (hasConfirmedConflict(confirmedBooking, id)) {
+      setBookings(l => l.map(b => (
+        b.id === id ? { ...b, status: 'cancelled' } : b
+      )))
+      toast$('⛔ This slot is already confirmed. Duplicate acceptance blocked.')
+      return
+    }
     
     // Update booking status and auto-reject conflicting pending bookings
     setBookings(l => l.map(b => {
@@ -123,14 +180,24 @@ export default function Bookings() {
     toast$('✅ Booking confirmed! Other conflicting bookings auto-rejected.')
   }
   const cancel = id => {
+    const targetBooking = bookings.find(b => b.id === id)
+    if (targetBooking && ownerVenueName && targetBooking.venue !== ownerVenueName) {
+      toast$('⛔ You can only cancel bookings for your own futsal.')
+      return
+    }
+
     setBookings(l => l.map(b => b.id===id ? {...b, status:'cancelled'} : b))
     setDetail(null)
   }
 
-  const filtered = bookings.filter(b => filter==='All' || b.status===filter.toLowerCase())
+  const filtered = ownerBookings.filter(b => filter==='All' || b.status===filter.toLowerCase())
   
   // Get pending booking request notifications
-  const pendingRequests = notifications.filter(n => n.type === 'booking_request' && n.status === 'unread')
+  const pendingRequests = notifications.filter(n => (
+    n.type === 'booking_request'
+    && n.status === 'unread'
+    && (!ownerVenueName || n.venue === ownerVenueName)
+  ))
 
   const bdg = s => s==='confirmed'?'success': s==='pending'?'warning':'danger'
 
@@ -149,9 +216,9 @@ export default function Bookings() {
           {/* Stats */}
           <div className="stats-row anim-2" style={{ gridTemplateColumns:'repeat(3,1fr)' }}>
             {[
-              { lbl:'Total',     cls:'si-blue',   icon:'fa-clipboard-list', v: bookings.length },
-              { lbl:'Confirmed', cls:'si-green',  icon:'fa-check-circle',   v: bookings.filter(b=>b.status==='confirmed').length },
-              { lbl:'Pending',   cls:'si-orange', icon:'fa-clock',          v: bookings.filter(b=>b.status==='pending').length },
+              { lbl:'Total',     cls:'si-blue',   icon:'fa-clipboard-list', v: ownerBookings.length },
+              { lbl:'Confirmed', cls:'si-green',  icon:'fa-check-circle',   v: ownerBookings.filter(b=>b.status==='confirmed').length },
+              { lbl:'Pending',   cls:'si-orange', icon:'fa-clock',          v: ownerBookings.filter(b=>b.status==='pending').length },
             ].map(s => (
               <div className="stat-card" key={s.lbl}>
                 <div className={`stat-icon ${s.cls}`}><i className={`fas ${s.icon}`} /></div>
