@@ -3,6 +3,7 @@ import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
 import { teams as mockTeams, LOCATION_COORDS } from '../../data/mockData.js'
 import { useAuth } from '../../App.jsx'
+import { emitChallengeCreate, onChallengeCreated } from '../../utils/socketService.js'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 
@@ -494,6 +495,43 @@ export default function FindMatch() {
     }
   }, [setMatchPosts])
 
+  // Listen for challenge creations from other teams
+  useEffect(() => {
+    onChallengeCreated((challengeData) => {
+      console.log('[FindMatch] Received challenge:created event:', challengeData)
+      
+      // Only process if challenge is directed to this team
+      if (challengeData.to !== currentTeamName) return
+      
+      const newNotification = {
+        id: Date.now(),
+        challengeId: challengeData.id,
+        type: 'challenge-request',
+        text: `${challengeData.from} sent you a match request.`,
+        time: 'just now',
+        unread: true,
+        team: currentTeamName,
+        createdAt: new Date().toISOString(),
+      }
+      
+      // Add challenge to local state
+      setChallenges(prev => {
+        const alreadyExists = prev.some(c => c.id === challengeData.id)
+        if (alreadyExists) return prev
+        return [challengeData, ...prev]
+      })
+      
+      // Add notification to local state
+      setNotifications(prev => [newNotification, ...prev])
+      
+      toast$(`⚡ ${challengeData.from} sent you a match request!`, 'info')
+    })
+
+    return () => {
+      // Listeners persist across component lifecycle
+    }
+  }, [currentTeamName, setChallenges, setNotifications])
+
   const recommendationData = useMemo(() => {
     const scored = teams
       .filter(t => t.id !== currentTeamId && t.name !== currentTeamName)
@@ -688,7 +726,7 @@ export default function FindMatch() {
     toast$('✅ Match accepted and added to Upcoming Bookings.')
   }
 
-  const sendRequest = (post) => {
+  const sendRequest = async (post) => {
     const validation = validateCompatibility(post)
     if (!validation.allow) {
       setReqModal(null)
@@ -709,8 +747,7 @@ export default function FindMatch() {
 
     if (!challengeAlreadyExists) {
       const challengeId = Date.now()
-
-      setChallenges(prev => [{
+      const newChallenge = {
         id: challengeId,
         from: myTeam.name,
         to: post.team,
@@ -722,7 +759,43 @@ export default function FindMatch() {
         exactSchedule: true,
         source: 'find-match-post',
         postId: post.id,
-      }, ...prev])
+      }
+
+      // Persist challenge to backend
+      try {
+        const response = await fetch(`${API_BASE}/challenges`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: newChallenge.from,
+            to: newChallenge.to,
+            date: newChallenge.date,
+            time: newChallenge.time,
+            venue: newChallenge.venue,
+            note: newChallenge.note,
+            status: 'pending',
+          }),
+        })
+
+        const result = await response.json()
+        if (response.ok && result.challenges) {
+          const persistedChallenge = { ...newChallenge, id: result.challenges._id || challengeId }
+          
+          // Update local state with persisted challenge
+          setChallenges(prev => [persistedChallenge, ...prev])
+          
+          // Emit socket event for real-time notification
+          emitChallengeCreate(persistedChallenge)
+        } else {
+          // Fallback: still add to local state if API fails
+          setChallenges(prev => [newChallenge, ...prev])
+          emitChallengeCreate(newChallenge)
+        }
+      } catch (_error) {
+        // Fallback: still add to local state and emit if API fails
+        setChallenges(prev => [newChallenge, ...prev])
+        emitChallengeCreate(newChallenge)
+      }
 
       setNotifications(prev => [{
         id: Date.now(),
@@ -745,10 +818,9 @@ export default function FindMatch() {
     toast$('Post removed.', 'info')
   }
 
-  const hitTeam = team => {
+  const hitTeam = async team => {
     const challengeId = Date.now()
-
-    setChallenges(prev => [{
+    const newChallenge = {
       id: challengeId,
       from: myTeam.name,
       to: team.name,
@@ -757,7 +829,43 @@ export default function FindMatch() {
       venue: team.proposedVenue || preferredContext.venue,
       note: 'Manual challenge from team recommendation panel.',
       status: 'pending',
-    }, ...prev])
+    }
+
+    // Persist challenge to backend
+    try {
+      const response = await fetch(`${API_BASE}/challenges`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: newChallenge.from,
+          to: newChallenge.to,
+          date: newChallenge.date,
+          time: newChallenge.time,
+          venue: newChallenge.venue,
+          note: newChallenge.note,
+          status: 'pending',
+        }),
+      })
+
+      const result = await response.json()
+      if (response.ok && result.challenges) {
+        const persistedChallenge = { ...newChallenge, id: result.challenges._id || challengeId }
+        
+        // Update local state with persisted challenge
+        setChallenges(prev => [persistedChallenge, ...prev])
+        
+        // Emit socket event for real-time notification
+        emitChallengeCreate(persistedChallenge)
+      } else {
+        // Fallback: still add to local state if API fails
+        setChallenges(prev => [newChallenge, ...prev])
+        emitChallengeCreate(newChallenge)
+      }
+    } catch (_error) {
+      // Fallback: still add to local state and emit if API fails
+      setChallenges(prev => [newChallenge, ...prev])
+      emitChallengeCreate(newChallenge)
+    }
 
     setNotifications(prev => [{
       id: Date.now(),
