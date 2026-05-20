@@ -55,7 +55,7 @@ export default function Bookings() {
   // Listen for real-time booking updates from other users
   useEffect(() => {
     // Listen for new bookings from other team members
-    onBookingCreated((bookingData) => {
+    const unsubscribeCreate = onBookingCreated((bookingData) => {
       console.log('[Bookings] Received booking:created event:', bookingData)
 
       if (ownerVenueName && bookingData.venue !== ownerVenueName) {
@@ -72,7 +72,7 @@ export default function Bookings() {
     })
 
     // Listen for booking updates (status changes)
-    onBookingUpdated((updateData) => {
+    const unsubscribeUpdate = onBookingUpdated((updateData) => {
       console.log('[Bookings] Received booking:updated event:', updateData)
       
       setBookings(prev => 
@@ -82,7 +82,7 @@ export default function Bookings() {
     })
 
     // Listen for booking cancellations
-    onBookingCancelled((cancelData) => {
+    const unsubscribeCancel = onBookingCancelled((cancelData) => {
       console.log('[Bookings] Received booking:cancelled event:', cancelData)
       
       setBookings(prev => 
@@ -93,8 +93,9 @@ export default function Bookings() {
 
     // Cleanup listeners on unmount
     return () => {
-      // Optional: Remove specific listeners if needed
-      // removeListener('booking:created')
+      if (unsubscribeCreate) unsubscribeCreate()
+      if (unsubscribeUpdate) unsubscribeUpdate()
+      if (unsubscribeCancel) unsubscribeCancel()
     }
   }, [ownerVenueName, setBookings])
 

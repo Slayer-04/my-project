@@ -497,7 +497,7 @@ export default function FindMatch() {
 
   // Listen for challenge creations from other teams
   useEffect(() => {
-    onChallengeCreated((challengeData) => {
+    const unsubscribe = onChallengeCreated((challengeData) => {
       console.log('[FindMatch] Received challenge:created event:', challengeData)
       
       // Only process if challenge is directed to this team
@@ -528,7 +528,8 @@ export default function FindMatch() {
     })
 
     return () => {
-      // Listeners persist across component lifecycle
+      // Cleanup: remove this listener when component unmounts or dependencies change
+      if (unsubscribe) unsubscribe()
     }
   }, [currentTeamName, setChallenges, setNotifications])
 

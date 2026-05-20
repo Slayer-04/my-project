@@ -170,92 +170,135 @@ export const emitChallengeRespond = (responseData) => {
 
 /**
  * Listen for booking created event
+ * Returns unsubscribe function to remove listener
  */
 export const onBookingCreated = (callback) => {
   if (!socket) {
     console.warn('[Socket] Socket not connected, skipping onBookingCreated listener')
-    return
+    return () => {}
   }
 
-  socket.on('booking:created', (data) => {
+  const handler = (data) => {
     console.log('[Socket] Received booking:created', data)
     callback(data)
-  })
+  }
+
+  socket.on('booking:created', handler)
+
+  return () => {
+    socket.off('booking:created', handler)
+  }
 }
 
 /**
  * Listen for booking updated event
+ * Returns unsubscribe function to remove listener
  */
 export const onBookingUpdated = (callback) => {
   if (!socket) {
     console.warn('[Socket] Socket not connected, skipping onBookingUpdated listener')
-    return
+    return () => {}
   }
 
-  socket.on('booking:updated', (data) => {
+  const handler = (data) => {
     console.log('[Socket] Received booking:updated', data)
     callback(data)
-  })
+  }
+
+  socket.on('booking:updated', handler)
+
+  return () => {
+    socket.off('booking:updated', handler)
+  }
 }
 
 /**
  * Listen for booking cancelled event
+ * Returns unsubscribe function to remove listener
  */
 export const onBookingCancelled = (callback) => {
   if (!socket) {
     console.warn('[Socket] Socket not connected, skipping onBookingCancelled listener')
-    return
+    return () => {}
   }
 
-  socket.on('booking:cancelled', (data) => {
+  const handler = (data) => {
     console.log('[Socket] Received booking:cancelled', data)
     callback(data)
-  })
+  }
+
+  socket.on('booking:cancelled', handler)
+
+  return () => {
+    socket.off('booking:cancelled', handler)
+  }
 }
 
 /**
  * Listen for challenge created event
+ * Returns unsubscribe function to remove listener
  */
 export const onChallengeCreated = (callback) => {
   if (!socket) {
     console.warn('[Socket] Socket not connected, skipping onChallengeCreated listener')
-    return
+    return () => {}
   }
 
-  socket.on('challenge:created', (data) => {
+  const handler = (data) => {
     console.log('[Socket] Received challenge:created', data)
     callback(data)
-  })
+  }
+
+  socket.on('challenge:created', handler)
+
+  // Return unsubscribe function
+  return () => {
+    socket.off('challenge:created', handler)
+  }
 }
 
 /**
  * Listen for challenge responded event
+ * Returns unsubscribe function to remove listener
  */
 export const onChallengeResponded = (callback) => {
   if (!socket) {
     console.warn('[Socket] Socket not connected, skipping onChallengeResponded listener')
-    return
+    return () => {}
   }
 
-  socket.on('challenge:responded', (data) => {
+  const handler = (data) => {
     console.log('[Socket] Received challenge:responded', data)
     callback(data)
-  })
+  }
+
+  socket.on('challenge:responded', handler)
+
+  return () => {
+    socket.off('challenge:responded', handler)
+  }
 }
 
 /**
  * Listen for user joined event
+ * Returns unsubscribe function to remove listener
  */
 export const onUserJoined = (callback) => {
   if (!socket) {
     console.warn('[Socket] Socket not connected, skipping onUserJoined listener')
-    return
+    return () => {}
   }
 
-  socket.on('user:joined', (data) => {
+  const handler = (data) => {
     console.log('[Socket] Received user:joined', data)
     callback(data)
-  })
+  }
+
+  socket.on('user:joined', handler)
+
+  return () => {
+    socket.off('user:joined', handler)
+  }
 }
 
 /**
