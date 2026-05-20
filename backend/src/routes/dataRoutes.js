@@ -58,11 +58,15 @@ router.get('/bookings/owner', async (req, res) => {
       return res.status(400).json({ message: 'ownerEmail, ownerName, venue, or venueId is required.' })
     }
 
-    const query = {}
-    if (venueId) query.venueId = venueId
-    if (venue) query.venue = venue
-    if (ownerEmail) query.ownerEmail = ownerEmail
-    if (ownerName) query.ownerName = ownerName
+    const filters = []
+    if (venueId) filters.push({ venueId })
+    if (venue) filters.push({ venue: { $regex: `^${venue.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}$`, $options: 'i' } })
+    if (ownerEmail) filters.push({ ownerEmail })
+    if (ownerName) {
+      filters.push({ ownerName: { $regex: `^${ownerName.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}$`, $options: 'i' } })
+    }
+
+    const query = filters.length === 1 ? filters[0] : { $or: filters }
 
     const bookings = await Booking.find(query)
       .populate('challengeId')

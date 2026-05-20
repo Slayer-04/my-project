@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
-import { futsalPartners, teams as mockTeams } from '../../data/mockData.js'
+import { futsalPartners, teams as mockTeams, venues as mockVenues } from '../../data/mockData.js'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 
@@ -91,17 +91,72 @@ export default function Login() {
   // Load futsal owner options
   useEffect(() => {
     if (f.role !== 'owner') return
-    
-    const owners = futsalPartners.map((partner, index) => ({
-      id: partner.id,
-      email: `${partner.owner.toLowerCase().replace(/\s+/g, '.')}@fotmatch.com`,
-      name: partner.owner,
-      venue: partner.name,
-      label: `${partner.owner} (${partner.name})`,
-    }))
-    
-    setOwnerOptions(owners)
-    setF(prev => ({ ...prev, email: owners[0]?.email || '' }))
+
+    let active = true
+
+    const loadOwners = async () => {
+      try {
+        try {
+          const response = await fetch(`${API_BASE}/venues`)
+          const data = await response.json()
+
+          if (response.ok && Array.isArray(data) && data.length > 0) {
+            const ownersFromApi = data
+              .filter(venue => venue.owner && venue.ownerEmail)
+              .map((venue, index) => ({
+                id: venue._id || venue.id || `owner-${index + 1}`,
+                email: venue.ownerEmail,
+                name: venue.owner,
+                venue: venue.name,
+                label: `${venue.owner} (${venue.name})`,
+              }))
+              .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }))
+
+            if (!active) return
+            setOwnerOptions(ownersFromApi)
+            setF(prev => ({ ...prev, email: ownersFromApi[0]?.email || '' }))
+            return
+          }
+        } catch (_apiError) {
+          // Fall through to mock owner options
+        }
+
+        const ownersFromMockVenues = mockVenues
+          .filter(venue => venue.owner && venue.ownerEmail)
+          .map(venue => ({
+            id: venue.id,
+            email: venue.ownerEmail,
+            name: venue.owner,
+            venue: venue.name,
+            label: `${venue.owner} (${venue.name})`,
+          }))
+          .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }))
+
+        const owners = ownersFromMockVenues.length > 0
+          ? ownersFromMockVenues
+          : futsalPartners.map((partner) => ({
+              id: partner.id,
+              email: `${partner.owner.toLowerCase().replace(/\s+/g, '.')}@fotmatch.com`,
+              name: partner.owner,
+              venue: partner.name,
+              label: `${partner.owner} (${partner.name})`,
+            }))
+
+        if (!active) return
+        setOwnerOptions(owners)
+        setF(prev => ({ ...prev, email: owners[0]?.email || '' }))
+      } catch (_error) {
+        if (!active) return
+        setOwnerOptions([])
+        setF(prev => ({ ...prev, email: '' }))
+      }
+    }
+
+    loadOwners()
+
+    return () => {
+      active = false
+    }
   }, [f.role])
 
   const selectedTeam = teamOptions.find(team => team.email === f.email) || null

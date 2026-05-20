@@ -13,7 +13,7 @@ const mapBookingFromApi = booking => ({
 })
 
 export default function Bookings() {
-  const { user, bookings, setBookings, notifications, setNotifications } = useAuth()
+  const { user, bookings, setBookings, setNotifications } = useAuth()
   const [detail, setDetail] = useState(null)
   const [toast,  setToast]  = useState('')
   const [filter, setFilter] = useState('All')
@@ -26,9 +26,13 @@ export default function Bookings() {
   const refreshOwnerBookings = async () => {
     try {
       const params = new URLSearchParams()
-      if (ownerEmail) params.set('ownerEmail', ownerEmail)
-      if (ownerName) params.set('ownerName', ownerName)
-      if (ownerVenueName) params.set('venue', ownerVenueName)
+      if (ownerVenueName) {
+        params.set('venue', ownerVenueName)
+      } else if (ownerEmail) {
+        params.set('ownerEmail', ownerEmail)
+      } else if (ownerName) {
+        params.set('ownerName', ownerName)
+      }
 
       if (![...params.keys()].length) return
 
@@ -263,12 +267,21 @@ export default function Bookings() {
 
   const filtered = ownerBookings.filter(b => filter==='All' || b.status===filter.toLowerCase())
   
-  // Get pending booking request notifications
-  const pendingRequests = notifications.filter(n => (
-    n.type === 'booking_request'
-    && n.status === 'unread'
-    && (!ownerVenueName || n.venue === ownerVenueName)
-  ))
+  // Build pending requests from server-backed bookings so owners can always act.
+  const pendingRequests = ownerBookings
+    .filter(booking => booking.status === 'pending')
+    .map(booking => ({
+      id: booking.id,
+      bookingId: booking.id,
+      team: booking.team,
+      venue: booking.venue,
+      ownerName: booking.ownerName,
+      ownerEmail: booking.ownerEmail,
+      date: booking.date,
+      time: booking.time,
+      message: `${booking.team} requested ${booking.venue} on ${booking.date} at ${booking.time}`,
+      status: 'unread',
+    }))
 
   const bdg = s => s==='confirmed'?'success': s==='pending'?'warning':'danger'
 

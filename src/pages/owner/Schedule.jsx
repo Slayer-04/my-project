@@ -1,28 +1,228 @@
-import React, { useState } from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
-import { scheduleData as init } from '../../data/mockData.js'
+import { useAuth } from '../../App.jsx'
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+
+const HOUR_SLOTS = Array.from({ length: 17 }, (_, index) => {
+  const hour = index + 6
+  const suffix = hour >= 12 ? 'PM' : 'AM'
+  const displayHour = hour % 12 === 0 ? 12 : hour % 12
+  return `${String(displayHour).padStart(2, '0')}:00 ${suffix}`
+})
+
+const mapBookingFromApi = booking => ({
+  ...booking,
+  id: booking.id || booking._id,
+  venue: booking.venueId?.name || booking.venue,
+})
+
+const toDateId = dateValue => {
+  if (!dateValue) return ''
+  if (typeof dateValue === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) return dateValue
+    const parsed = new Date(dateValue)
+    if (Number.isNaN(parsed.getTime())) return ''
+    return parsed.toISOString().split('T')[0]
+  }
+
+  const parsed = new Date(dateValue)
+  if (Number.isNaN(parsed.getTime())) return ''
+  return parsed.toISOString().split('T')[0]
+}
+
+const toSlotTime = value => {
+  if (!value) return ''
+  if (/^\d{2}:\d{2}\s(?:AM|PM)$/.test(value)) return value
+
+  const [hourPart, minutePart] = value.split(':')
+  const hourNum = Number(hourPart)
+  const minuteNum = Number(minutePart)
+  if (Number.isNaN(hourNum) || Number.isNaN(minuteNum)) return ''
+
+  const suffix = hourNum >= 12 ? 'PM' : 'AM'
+  const displayHour = hourNum % 12 === 0 ? 12 : hourNum % 12
+  return `${String(displayHour).padStart(2, '0')}:${String(minuteNum).padStart(2, '0')} ${suffix}`
+}
 
 export default function Schedule() {
-  const [sched, setSched] = useState(init)
+  const { user, bookings, setBookings } = useAuth()
   const [toast, setToast] = useState('')
   const [modal, setModal] = useState(false)
   const [nSlot, setNSlot] = useState({ day:0, time:'' })
+  const [blockedSlots, setBlockedSlots] = useState(() => {
+    try {
+      const stored = localStorage.getItem('fotmatch-owner-blocked-slots')
+      return stored ? JSON.parse(stored) : []
+    } catch (_error) {
+      return []
+    }
+  })
+
+  const ownerVenueName = (user?.venueName || '').trim()
+  const ownerEmail = (user?.email || '').trim().toLowerCase()
+  const ownerName = (user?.name || '').trim()
 
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
-  const cycle = (di, si) => {
-    const map = { available:'blocked', blocked:'available', booked:'booked' }
-    setSched(prev => prev.map((d, i) => i!==di ? d : {
-      ...d,
-      slots: d.slots.map((s, j) => j!==si ? s : { ...s, status: map[s.status]||'available' })
+  const persistBlockedSlots = nextBlocked => {
+    setBlockedSlots(nextBlocked)
+    try {
+      localStorage.setItem('fotmatch-owner-blocked-slots', JSON.stringify(nextBlocked))
+    } catch (_error) {
+      // Keep schedule usable even when local storage is unavailable.
+    }
+  }
+
+  const refreshOwnerBookings = async () => {
+    try {
+      const params = new URLSearchParams()
+      if (ownerVenueName) {
+        params.set('venue', ownerVenueName)
+      } else if (ownerEmail) {
+        params.set('ownerEmail', ownerEmail)
+      } else if (ownerName) {
+        params.set('ownerName', ownerName)
+      }
+
+      if (![...params.keys()].length) return
+
+      const response = await fetch(`${API_BASE}/bookings/owner?${params.toString()}`)
+      if (!response.ok) return
+
+      const data = await response.json()
+      if (!Array.isArray(data)) return
+
+      setBookings(data.map(mapBookingFromApi))
+    } catch (_error) {
+      // Keep current local state if API call fails.
+    }
+  }
+
+  useEffect(() => {
+    refreshOwnerBookings()
+  }, [ownerEmail, ownerName, ownerVenueName])
+
+  const scheduleDays = useMemo(() => {
+    const weekdayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'long' })
+    const dateFormatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
+    const today = new Date()
+
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(today)
+      date.setDate(today.getDate() + index)
+      const dateId = date.toISOString().split('T')[0]
+
+      return {
+        id: dateId,
+        day: `${weekdayFormatter.format(date)}, ${dateFormatter.format(date)}`,
+      }
+    })
+  }, [])
+
+  const ownerBookings = useMemo(
+    () => bookings.filter(booking => !ownerVenueName || booking.venue === ownerVenueName),
+    [bookings, ownerVenueName]
+  )
+
+  const bookingSlotMap = useMemo(() => {
+    const map = new Map()
+
+    ownerBookings.forEach(booking => {
+      if (booking.status === 'cancelled') return
+
+      const dateId = toDateId(booking.date)
+      if (!dateId) return
+      const key = `${dateId}|${booking.time}`
+      map.set(key, {
+        status: booking.status,
+        team: booking.team,
+      })
+    })
+
+    return map
+  }, [ownerBookings])
+
+  const blockedSlotSet = useMemo(() => {
+    const next = new Set()
+    blockedSlots.forEach(slot => {
+      if (!slot?.date || !slot?.time) return
+      next.add(`${slot.date}|${slot.time}`)
+    })
+    return next
+  }, [blockedSlots])
+
+  const sched = useMemo(() => (
+    scheduleDays.map(day => ({
+      ...day,
+      slots: HOUR_SLOTS.map(time => {
+        const key = `${day.id}|${time}`
+        const bookingInfo = bookingSlotMap.get(key)
+
+        if (bookingInfo) {
+          return {
+            date: day.id,
+            time,
+            status: 'booked',
+            team: bookingInfo.status === 'pending'
+              ? `${bookingInfo.team} (pending)`
+              : bookingInfo.team,
+          }
+        }
+
+        if (blockedSlotSet.has(key)) {
+          return { date: day.id, time, status: 'blocked' }
+        }
+
+        return { date: day.id, time, status: 'available' }
+      }),
     }))
+  ), [bookingSlotMap, blockedSlotSet, scheduleDays])
+
+  const cycle = (di, si) => {
+    const day = sched[di]
+    const slot = day?.slots?.[si]
+
+    if (!slot || slot.status === 'booked') return
+
+    const key = `${slot.date}|${slot.time}`
+    if (slot.status === 'available') {
+      persistBlockedSlots([...blockedSlots, { date: slot.date, time: slot.time }])
+      return
+    }
+
+    persistBlockedSlots(blockedSlots.filter(item => `${item.date}|${item.time}` !== key))
   }
 
   const addSlot = () => {
     if (!nSlot.time) return
-    setSched(prev => prev.map((d, i) => i!==nSlot.day ? d : { ...d, slots:[...d.slots,{time:nSlot.time,status:'available'}] }))
-    setModal(false); setNSlot({ day:0, time:'' }); toast$('✅ Slot added!')
+
+    const selectedDay = scheduleDays[nSlot.day]
+    if (!selectedDay) return
+
+    const normalizedTime = toSlotTime(nSlot.time)
+    if (!normalizedTime) {
+      toast$('⛔ Invalid slot time.')
+      return
+    }
+
+    const key = `${selectedDay.id}|${normalizedTime}`
+
+    const alreadyBooked = bookingSlotMap.has(key)
+    if (alreadyBooked) {
+      toast$('⛔ This slot already has a booking request.')
+      return
+    }
+
+    const alreadyBlocked = blockedSlotSet.has(key)
+    if (!alreadyBlocked) {
+      persistBlockedSlots([...blockedSlots, { date: selectedDay.id, time: normalizedTime }])
+    }
+
+    setModal(false)
+    setNSlot({ day:0, time:'' })
+    toast$('✅ Slot blocked in schedule!')
   }
 
   return (
@@ -36,7 +236,7 @@ export default function Schedule() {
           <div className="sec-hd anim-1">
             <div>
               <h2>Weekly Schedule</h2>
-              <p>Click a slot to toggle Available ↔ Blocked. Booked slots are locked.</p>
+              <p>Live slots are synced with bookings. Pending and confirmed bookings are locked.</p>
             </div>
             <button className="btn btn-primary" onClick={() => setModal(true)}>
               <i className="fas fa-plus" /> Add Slot
