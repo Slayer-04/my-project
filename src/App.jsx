@@ -7,6 +7,7 @@ import { initSocket, emitUserJoin, disconnectSocket } from './utils/socketServic
 /* ── Auth ──────────────────────────────── */
 import Login    from './pages/auth/Login.jsx'
 import Register from './pages/auth/Register.jsx'
+import VerifyEmail from './pages/auth/VerifyEmail.jsx'
 
 /* ── Team User ─────────────────────────── */
 import TeamDashboard from './pages/team/TeamDashboard.jsx'
@@ -211,6 +212,7 @@ export default function App() {
           <Route path="/"        element={<Navigate to="/login" replace />} />
           <Route path="/login"   element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/signup"  element={<Navigate to="/register" replace />} />
 
           {/* Team */}

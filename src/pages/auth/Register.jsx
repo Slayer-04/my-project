@@ -31,29 +31,19 @@ export default function Register() {
           setErr(data.message || 'Failed to create team account.')
           return
         }
+        // Send OTP for email verification before finalizing login
+        try {
+          await fetch(`${API_BASE}/auth/send-otp`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: f.email }),
+          })
+        } catch (_e) {
+          // ignore send failures; user can request resend on verify page
+        }
 
-        setUser({
-          id: data.team._id,
-          name: data.team.captainName,
-          email: data.team.email,
-          role: 'team',
-          teamProfileCompleted: data.team.teamProfileCompleted,
-          eloRating: data.team.eloRating,
-          eloMatchesPlayed: data.team.eloMatchesPlayed || 0,
-          teamName: data.team.teamName || '',
-          teamInfo: {
-            name: data.team.teamName || '',
-            teamName: data.team.teamName || '',
-            location: data.team.location || '',
-            skill: data.team.skill || 'Intermediate',
-            lat: data.team.lat,
-            lng: data.team.lng,
-            preferredDay: data.team.preferredDay || 'Saturday',
-            preferredTime: data.team.preferredTime || '06:00 PM',
-            currentElo: data.team.eloRating,
-          },
-        })
-        navigate('/team')
+        // Redirect to verify page and pass created team in location state
+        navigate('/verify-email', { state: { email: f.email, team: data.team } })
         return
       }
 

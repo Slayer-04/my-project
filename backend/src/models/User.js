@@ -24,6 +24,12 @@ const UserSchema = new mongoose.Schema(
     lastLogin: { type: Date, default: null },
     verified: { type: Boolean, default: false },
     verificationToken: { type: String, default: null },
+    // Email verification / OTP subdocument
+    otp: {
+      codeHash: { type: String, default: null }, // bcrypt-hashed OTP
+      expiresAt: { type: Date, default: null },
+      attempts: { type: Number, default: 0 },
+    },
   },
   { timestamps: true }
 )

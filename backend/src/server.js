@@ -2,11 +2,14 @@ const express = require('express')
 const cors = require('cors')
 const mongoose = require('mongoose')
 const dotenv = require('dotenv')
+const { MongoMemoryServer } = require('mongodb-memory-server')
 const http = require('http')
 const { Server } = require('socket.io')
 const teamRoutes = require('./routes/teamRoutes')
 const gameRoutes = require('./routes/gameRoutes')
 const dataRoutes = require('./routes/dataRoutes')
+const authRoutes = require('./routes/authRoutes')
+const { verifyTransport } = require('./utils/emailUtils')
 
 dotenv.config()
 
@@ -32,6 +35,7 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/teams', teamRoutes)
 app.use('/api', gameRoutes)
 app.use('/api', dataRoutes)
+app.use('/api/auth', authRoutes)
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ message: 'API route not found.' })
@@ -151,21 +155,53 @@ io.on('connection', (socket) => {
 // ============================================
 
 const start = async () => {
-  if (!MONGODB_URI) {
-    console.error('❌ Missing MONGODB_URI in environment variables.')
-    console.error('Create backend/.env from backend/.env.example and set MONGODB_URI to a valid MongoDB connection string.')
-    process.exit(1)
+  let mongoUri = MONGODB_URI
+  let memoryServer = null
+
+  if (!mongoUri) {
+    console.warn('⚠️ MONGODB_URI not set — starting in-memory MongoDB for development...')
+    try {
+      memoryServer = await MongoMemoryServer.create()
+      mongoUri = memoryServer.getUri()
+      console.log('🧪 In-memory MongoDB started for dev')
+    } catch (err) {
+      console.error('❌ Failed to start in-memory MongoDB:', err.message)
+      process.exit(1)
+    }
   }
 
   try {
-    await mongoose.connect(MONGODB_URI)
+    await mongoose.connect(mongoUri)
     console.log('✅ MongoDB connected successfully.')
+
+    // Verify SMTP transporter (does not block server start on failure)
+    try {
+      const smtpCheck = await verifyTransport()
+      if (!smtpCheck.ok) {
+        console.warn('⚠️ SMTP verification failed:', smtpCheck.message)
+        console.warn('Set EMAIL_USER and EMAIL_PASS (App Password) in backend/.env to enable sending emails.')
+      }
+    } catch (e) {
+      console.warn('⚠️ SMTP verify check threw an error:', e.message)
+    }
 
     server.listen(PORT, () => {
       console.log(`✅ Backend API listening on http://localhost:${PORT}`)
       console.log(`✅ WebSocket Server ready on ws://localhost:${PORT}`)
       console.log(`📡 Waiting for client connections...`)
     })
+
+    // Clean up memory server on process exit
+    const cleanup = async () => {
+      try {
+        await mongoose.disconnect()
+        if (memoryServer) await memoryServer.stop()
+      } catch (_e) {}
+      process.exit(0)
+    }
+
+    process.on('SIGINT', cleanup)
+    process.on('SIGTERM', cleanup)
   } catch (error) {
     console.error('❌ Failed to connect to MongoDB:', error.message)
     process.exit(1)
