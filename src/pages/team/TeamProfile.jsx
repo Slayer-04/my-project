@@ -1,4 +1,4 @@
-import React, { useState, lazy, Suspense } from 'react'
+import React, { useEffect, useState, lazy, Suspense } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
@@ -12,6 +12,7 @@ export default function TeamProfile() {
   const { user, setUser, matchResults } = useAuth()
   const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
+  const [leavingTeam, setLeavingTeam] = useState(false)
   const dayOptions = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
   const timeOptions = ['06:00 AM', '07:00 AM', '08:00 AM', '10:00 AM', '12:00 PM', '02:00 PM', '04:00 PM', '06:00 PM', '08:00 PM']
   const [info, setInfo] = useState(
@@ -29,6 +30,7 @@ export default function TeamProfile() {
   const [locationVerified, setLocationVerified] = useState(false)
   const [showMap, setShowMap] = useState(false)
   const isFirstSetup = !user?.teamProfileCompleted
+  const isCaptain = user?.isCaptain !== false
 
   const skillBaseElo = {
     Beginner: 1000,
@@ -97,6 +99,12 @@ export default function TeamProfile() {
   const baseElo = info.baseElo ?? skillBaseElo[info.skill] ?? 1200
   const fallbackElo = baseElo + (wins * 25) + (draws * 10) - (losses * 20)
   const currentElo = user?.eloRating ?? info.currentElo ?? fallbackElo
+  const formatUid = value => {
+    const digits = String(value || '').replace(/\D/g, '')
+    if (digits.length !== 8) return 'Pending'
+    return digits
+  }
+  const teamUid = formatUid(user?.uid)
 
   const handleLocationConfirm = (loc) => {
     setInfo({ ...info, location: loc.address, lat: loc.lat, lng: loc.lng })
@@ -106,6 +114,12 @@ export default function TeamProfile() {
   }
 
   const save = async () => {
+    if (!isCaptain && !isFirstSetup) {
+      setToast('Only the captain can edit team profile details.')
+      setTimeout(() => setToast(''), 3000)
+      return
+    }
+
     if (!info.name.trim() || !info.location.trim()) {
       setToast('Please fill in team name and location.')
       setTimeout(() => setToast(''), 3000)
@@ -143,6 +157,7 @@ export default function TeamProfile() {
           }
           setUser({
             ...user,
+            uid: data.team.uid || user?.uid || '',
             eloRating: data.team.eloRating,
             eloMatchesPlayed: data.team.eloMatchesPlayed || 0,
             teamProfileCompleted: data.team.teamProfileCompleted,
@@ -180,6 +195,7 @@ export default function TeamProfile() {
           }
           setUser({
             ...user,
+            uid: data.team.uid || user?.uid || '',
             eloRating: data.team.eloRating,
             eloMatchesPlayed: data.team.eloMatchesPlayed || 0,
             teamProfileCompleted: data.team.teamProfileCompleted,
@@ -206,6 +222,7 @@ export default function TeamProfile() {
       const computedBaseElo = info.baseElo ?? skillBaseElo[info.skill] ?? 1200
       setUser({
         ...user,
+        uid: user?.uid || '',
         teamProfileCompleted: true,
         teamInfo: {
           ...info,
@@ -227,6 +244,59 @@ export default function TeamProfile() {
     setTimeout(() => setToast(''), 3000)
   }
 
+  const leaveTeam = async () => {
+    if (!user?.email) return
+    const confirmed = window.confirm('Are you sure you want to leave this team?')
+    if (!confirmed) return
+
+    setLeavingTeam(true)
+    try {
+      const response = await fetch(`${API_BASE}/team-joins/leave`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requesterEmail: user.email,
+          teamId: user.id,
+        }),
+      })
+
+      const data = await response.json()
+      if (!response.ok) {
+        setToast(data.message || 'Failed to leave team.')
+        setTimeout(() => setToast(''), 3000)
+        return
+      }
+
+      setUser({
+        ...user,
+        uid: '',
+        teamAccess: 'basic',
+        isCaptain: false,
+        teamProfileCompleted: false,
+        teamName: '',
+        teamInfo: {
+          name: '',
+          teamName: '',
+          location: '',
+          skill: 'Intermediate',
+          preferredDay: 'Saturday',
+          preferredTime: '06:00 PM',
+          lat: 27.7172,
+          lng: 85.3240,
+          currentElo: 1000,
+        },
+      })
+
+      setToast('You left the team. Join another team using UID.')
+      setTimeout(() => navigate('/team/join'), 500)
+    } catch (_error) {
+      setToast('Unable to leave team right now.')
+      setTimeout(() => setToast(''), 3000)
+    } finally {
+      setLeavingTeam(false)
+    }
+  }
+
   const rColor = r => r==='win'?'#00b96b': r==='loss'?'#e53e3e':'#eab308'
 
   return (
@@ -246,11 +316,12 @@ export default function TeamProfile() {
               <div className="ph-tags">
                 <span className="ph-tag">{info.skill}</span>
                 <span className="ph-tag">Elo {currentElo}</span>
+                <span className="ph-tag">UID {teamUid}</span>
                 <span className="ph-tag">8 Members</span>
                 <span className="ph-tag">Est. 2023</span>
               </div>
             </div>
-            {!isFirstSetup && (
+            {!isFirstSetup && isCaptain && (
               <div className="ph-actions">
                 <button
                   className="btn btn-outline"
@@ -268,10 +339,10 @@ export default function TeamProfile() {
             {/* Info / Edit */}
             <div className="card">
               <div className="card-hd">
-                <h3>{isFirstSetup ? 'Complete Team Profile' : editing ? 'Edit Info' : 'Team Information'}</h3>
+                <h3>{isFirstSetup ? 'Complete Team Profile' : (isCaptain && editing) ? 'Edit Info' : 'Team Information'}</h3>
               </div>
               <div className="card-bd">
-                {(editing || isFirstSetup) ? (
+                {(isCaptain && (editing || isFirstSetup)) ? (
                   <>
                     <div className="form-group">
                       <label className="form-label">Team Name</label>
@@ -439,6 +510,21 @@ export default function TeamProfile() {
                         <span style={{ fontSize:13, fontWeight:700 }}>{item.val}</span>
                       </div>
                     ))}
+
+                    {!isCaptain && !isFirstSetup && (
+                      <div style={{ marginTop:14 }}>
+                        <button
+                          type="button"
+                          className="btn btn-outline btn-full"
+                          style={{ borderColor:'#e53e3e', color:'#e53e3e' }}
+                          onClick={leaveTeam}
+                          disabled={leavingTeam}
+                        >
+                          <i className="fas fa-right-from-bracket" />
+                          {leavingTeam ? 'Leaving Team…' : 'Leave Team'}
+                        </button>
+                      </div>
+                    )}
                   </>
                 )}
               </div>

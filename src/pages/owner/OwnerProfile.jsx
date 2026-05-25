@@ -7,6 +7,12 @@ import { bookings } from '../../data/mockData.js'
 export default function OwnerProfile() {
   const { user } = useAuth()
   const [editing, setEditing] = useState(false)
+  const formatUid = value => {
+    const digits = String(value || '').replace(/\D/g, '')
+    if (!digits) return 'Pending'
+    return digits.length >= 8 ? digits.slice(-8) : digits.padStart(8, '0')
+  }
+  const venueUid = formatUid(user?.venueUid || user?.venueId)
   const [info, setInfo] = useState({
     venueName: 'Arena Futsal Park',
     location:  'Baneshwor, Kathmandu',
@@ -38,6 +44,7 @@ export default function OwnerProfile() {
               <div className="ph-tags">
                 <span className="ph-tag">{info.courts} Courts</span>
                 <span className="ph-tag">{info.hours}</span>
+                <span className="ph-tag">UID {venueUid}</span>
                 <span className="ph-tag">Verified Partner</span>
               </div>
             </div>

@@ -1,7 +1,11 @@
+const crypto = require('crypto')
 const mongoose = require('mongoose')
+
+const generateUid = () => String(crypto.randomInt(10000000, 100000000))
 
 const VenueSchema = new mongoose.Schema(
   {
+    uid: { type: String, required: true, unique: true, index: true, default: generateUid, immutable: true },
     name: { type: String, required: true, trim: true, unique: true },
     location: { type: String, required: true, trim: true },
     rating: { type: Number, required: true, min: 0, max: 5 },

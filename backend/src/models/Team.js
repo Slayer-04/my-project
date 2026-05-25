@@ -1,7 +1,11 @@
+const crypto = require('crypto')
 const mongoose = require('mongoose')
+
+const generateUid = () => String(crypto.randomInt(10000000, 100000000))
 
 const TeamSchema = new mongoose.Schema(
   {
+    uid: { type: String, required: true, unique: true, index: true, default: generateUid, immutable: true },
     captainName: { type: String, required: true, trim: true },
     email: { type: String, required: true, trim: true, lowercase: true, unique: true },
     teamName: { type: String, default: '', trim: true },

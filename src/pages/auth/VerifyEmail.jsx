@@ -4,6 +4,12 @@ import { useAuth } from '../../App.jsx'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 
+const formatUid = value => {
+  const digits = String(value || '').replace(/\D/g, '')
+  if (digits.length !== 8) return ''
+  return digits
+}
+
 export default function VerifyEmail() {
   const { state } = useLocation()
   const navigate = useNavigate()
@@ -43,6 +49,7 @@ export default function VerifyEmail() {
       if (team) {
         setUser({
           id: team._id,
+          uid: formatUid(team.uid),
           name: team.captainName,
           email,
           role: 'team',
@@ -62,7 +69,7 @@ export default function VerifyEmail() {
             currentElo: team.eloRating,
           },
         })
-        navigate('/team')
+        navigate(team.teamProfileCompleted ? '/team' : '/team/choice')
         return
       }
 

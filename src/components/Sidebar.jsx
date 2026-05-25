@@ -32,7 +32,11 @@ export default function Sidebar() {
   const { pathname } = useLocation()
   if (!user) return null
 
-  const items = NAV[user.role] || []
+  const isBasicTeamMember = user.role === 'team' && user.teamAccess === 'basic'
+  const items = (NAV[user.role] || []).filter(item => {
+    if (!isBasicTeamMember) return true
+    return item.path !== '/team/find-match' && item.path !== '/team/book-futsal'
+  })
 
   return (
     <aside className="sidebar">

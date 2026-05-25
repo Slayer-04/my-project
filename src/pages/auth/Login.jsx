@@ -5,6 +5,12 @@ import { futsalPartners, teams as mockTeams, venues as mockVenues } from '../../
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 
+const formatUid = value => {
+  const digits = String(value || '').replace(/\D/g, '')
+  if (digits.length !== 8) return ''
+  return digits
+}
+
 const DEMO = {
   team:  {
     name:'Alex Rivera',
@@ -45,6 +51,7 @@ export default function Login() {
             const sorted = data
               .map((team, index) => ({
                 id: team._id || team.id || `team-${index + 1}`,
+                uid: formatUid(team.uid),
                 email: team.email || '',
                 captainName: team.captainName || 'Team User',
                 label: team.teamName || team.name || team.captainName || team.email || `Team ${index + 1}`,
@@ -65,6 +72,7 @@ export default function Login() {
         const sorted = mockTeams
           .map((team, index) => ({
             id: team.id,
+            uid: formatUid(team.uid || team.id),
             email: `team${team.id}@fotmatch.com`,
             captainName: 'Team User',
             label: team.name,
@@ -105,6 +113,7 @@ export default function Login() {
               .filter(venue => venue.owner && venue.ownerEmail)
               .map((venue, index) => ({
                 id: venue._id || venue.id || `owner-${index + 1}`,
+                uid: formatUid(venue.uid),
                 email: venue.ownerEmail,
                 name: venue.owner,
                 venue: venue.name,
@@ -125,6 +134,7 @@ export default function Login() {
           .filter(venue => venue.owner && venue.ownerEmail)
           .map(venue => ({
             id: venue.id,
+            uid: formatUid(venue.uid || venue.id),
             email: venue.ownerEmail,
             name: venue.owner,
             venue: venue.name,
@@ -212,6 +222,7 @@ export default function Login() {
             email: owner?.email,
             role: 'owner',
             venueId: owner?.id,
+            venueUid: owner?.uid || owner?.id,
             venueName: owner?.venue,
           })
           navigate('/owner')
@@ -239,9 +250,12 @@ export default function Login() {
         if (response.ok) {
           setUser({
             id: data._id,
+            uid: formatUid(data.uid),
             name: data.captainName,
             email: data.email,
             role: 'team',
+            teamAccess: 'full',
+            isCaptain: true,
             teamProfileCompleted: data.teamProfileCompleted,
             eloRating: data.eloRating,
             eloMatchesPlayed: data.eloMatchesPlayed || 0,
@@ -259,7 +273,40 @@ export default function Login() {
             },
           })
 
-          navigate(data.teamProfileCompleted ? '/team' : '/team/profile')
+          navigate(data.teamProfileCompleted ? '/team' : '/team/choice')
+          return
+        }
+
+        const memberResponse = await fetch(`${API_BASE}/team-joins/member/${encodeURIComponent(normalizedEmail)}`)
+        const memberData = await memberResponse.json()
+
+        if (memberResponse.ok && memberData?.team) {
+          setUser({
+            id: memberData.team._id,
+            uid: formatUid(memberData.team.uid),
+            name: memberData.memberName || 'Team Member',
+            email: memberData.memberEmail || normalizedEmail,
+            role: 'team',
+            teamAccess: 'basic',
+            isCaptain: false,
+            teamProfileCompleted: true,
+            eloRating: memberData.team.eloRating,
+            eloMatchesPlayed: memberData.team.eloMatchesPlayed || 0,
+            teamName: memberData.team.teamName || '',
+            teamInfo: {
+              name: memberData.team.teamName || '',
+              teamName: memberData.team.teamName || '',
+              location: memberData.team.location || '',
+              skill: memberData.team.skill || 'Intermediate',
+              lat: memberData.team.lat,
+              lng: memberData.team.lng,
+              preferredDay: memberData.team.preferredDay || 'Saturday',
+              preferredTime: memberData.team.preferredTime || '06:00 PM',
+              currentElo: memberData.team.eloRating,
+            },
+          })
+
+          navigate('/team')
           return
         }
       } catch (_apiError) {
@@ -277,9 +324,12 @@ export default function Login() {
 
       setUser({
         id: selectedTeam.id,
+        uid: selectedTeam.uid,
         name: selectedTeam.captainName,
         email: selectedTeam.email,
         role: 'team',
+        teamAccess: 'full',
+        isCaptain: true,
         teamProfileCompleted: true,
         eloRating: 1500,
         eloMatchesPlayed: 0,
@@ -326,7 +376,7 @@ export default function Login() {
             <label className="form-label">Email Address</label>
             <input type="email" className="form-control" placeholder="you@example.com"
               value={f.email}
-              readOnly={f.role === 'team' && teamOptions.length > 0}
+              readOnly={false}
               onChange={e => setF({...f, email:e.target.value})}
             />
           </div>

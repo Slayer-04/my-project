@@ -11,6 +11,7 @@ export default function TeamDashboard() {
   const [scoreModalOpen, setScoreModalOpen] = useState(false)
   const [selectedMatch, setSelectedMatch] = useState(null)
   const myTeamName = user?.teamInfo?.name || user?.teamName || 'My Team'
+  const isBasicTeamMember = user?.teamAccess === 'basic'
 
   useEffect(() => {
     if (!Array.isArray(matchPosts) || matchPosts.length === 0) return
@@ -241,9 +242,11 @@ export default function TeamDashboard() {
             <div className="card">
               <div className="card-hd">
                 <h3>Upcoming Bookings</h3>
-                <button className="btn btn-outline btn-sm" onClick={() => navigate('/team/book-futsal')}>
-                  <i className="fas fa-plus" /> Book
-                </button>
+                {!isBasicTeamMember && (
+                  <button className="btn btn-outline btn-sm" onClick={() => navigate('/team/book-futsal')}>
+                    <i className="fas fa-plus" /> Book
+                  </button>
+                )}
               </div>
               <div>
                 {upcoming.length === 0 ? (

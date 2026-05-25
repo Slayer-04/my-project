@@ -14,6 +14,8 @@ import TeamDashboard from './pages/team/TeamDashboard.jsx'
 import FindMatch     from './pages/team/FindMatch.jsx'
 import BookFutsal    from './pages/team/BookFutsal.jsx'
 import TeamProfile   from './pages/team/TeamProfile.jsx'
+import TeamChoice    from './pages/team/TeamChoice.jsx'
+import JoinTeam      from './pages/team/JoinTeam.jsx'
 
 /* ── Futsal Owner ──────────────────────── */
 import OwnerDashboard from './pages/owner/OwnerDashboard.jsx'
@@ -43,7 +45,16 @@ function TeamProfileGuard({ children }) {
   const { user } = useAuth()
   if (!user) return <Navigate to="/login" replace />
   if (user.role !== 'team') return <Navigate to="/login" replace />
-  if (!user.teamProfileCompleted) return <Navigate to="/team/profile" replace />
+  if (!user.teamProfileCompleted) return <Navigate to="/team/choice" replace />
+  return children
+}
+
+function TeamFeatureGuard({ children }) {
+  const { user } = useAuth()
+  if (!user) return <Navigate to="/login" replace />
+  if (user.role !== 'team') return <Navigate to="/login" replace />
+  if (!user.teamProfileCompleted) return <Navigate to="/team/choice" replace />
+  if (user.teamAccess === 'basic') return <Navigate to="/team" replace />
   return children
 }
 
@@ -217,9 +228,11 @@ export default function App() {
 
           {/* Team */}
           <Route path="/team"             element={<Guard role="team"><TeamDashboard /></Guard>} />
-          <Route path="/team/find-match"  element={<TeamProfileGuard><FindMatch /></TeamProfileGuard>} />
-          <Route path="/team/book-futsal" element={<TeamProfileGuard><BookFutsal /></TeamProfileGuard>} />
+          <Route path="/team/find-match"  element={<TeamFeatureGuard><FindMatch /></TeamFeatureGuard>} />
+          <Route path="/team/book-futsal" element={<TeamFeatureGuard><BookFutsal /></TeamFeatureGuard>} />
           <Route path="/team/profile"     element={<Guard role="team"><TeamProfile /></Guard>} />
+          <Route path="/team/choice"      element={<Guard role="team"><TeamChoice /></Guard>} />
+          <Route path="/team/join"        element={<Guard role="team"><JoinTeam /></Guard>} />
 
           {/* Owner */}
           <Route path="/owner"          element={<Guard role="owner"><OwnerDashboard /></Guard>} />

@@ -8,11 +8,20 @@ const NotificationSchema = new mongoose.Schema(
     unread: { type: Boolean, default: true },
     type: {
       type: String,
-      enum: ['challenge-request', 'match-update', 'score-submission', 'general'],
+      enum: ['challenge-request', 'join-request', 'match-update', 'score-submission', 'general'],
       default: 'general',
     },
     challengeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Challenge', default: null },
     bookingId: { type: mongoose.Schema.Types.ObjectId, ref: 'Booking', default: null },
+    joinRequestId: { type: mongoose.Schema.Types.ObjectId, default: null },
+    joinRequestStatus: {
+      type: String,
+      enum: ['pending', 'approved', 'declined', 'left', ''],
+      default: '',
+    },
+    requesterName: { type: String, default: '', trim: true },
+    requesterEmail: { type: String, default: '', trim: true, lowercase: true },
+    teamUid: { type: String, default: '', trim: true },
     createdAt: { type: Date, default: () => new Date() },
   },
   { timestamps: true }
