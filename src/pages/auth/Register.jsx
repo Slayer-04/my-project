@@ -7,15 +7,13 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
 export default function Register() {
   const { setUser } = useAuth()
   const navigate    = useNavigate()
-  const [f, setF]   = useState({ name:'', email:'', password:'', confirm:'', role:'team' })
+  const [f, setF]   = useState({ name:'', email:'', role:'team' })
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
 
   const submit = async e => {
     e.preventDefault(); setErr('')
-    if (!f.name || !f.email || !f.password || !f.confirm) return setErr('All fields are required.')
-    if (f.password !== f.confirm) return setErr('Passwords do not match.')
-    if (f.password.length < 6) return setErr('Password must be at least 6 characters.')
+    if (!f.name || !f.email) return setErr('Name and email are required.')
 
     setLoading(true)
     try {
@@ -86,18 +84,6 @@ export default function Register() {
             <label className="form-label">Email Address</label>
             <input type="email" className="form-control" placeholder="you@example.com"
               value={f.email} onChange={e => setF({...f, email:e.target.value})} />
-          </div>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
-            <div className="form-group">
-              <label className="form-label">Password</label>
-              <input type="password" className="form-control" placeholder="Min 6 chars"
-                value={f.password} onChange={e => setF({...f, password:e.target.value})} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Confirm</label>
-              <input type="password" className="form-control" placeholder="Repeat"
-                value={f.confirm} onChange={e => setF({...f, confirm:e.target.value})} />
-            </div>
           </div>
           <div className="form-group">
             <label className="form-label">I am a…</label>
