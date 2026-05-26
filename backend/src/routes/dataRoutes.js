@@ -572,6 +572,19 @@ router.post('/users/register', async (req, res) => {
   }
 })
 
+router.get('/users', async (req, res) => {
+  try {
+    const role = String(req.query.role || '').trim().toLowerCase()
+    const filter = {}
+    if (role) filter.role = role
+
+    const users = await User.find(filter).select('-password').sort({ name: 1 })
+    return res.json(users)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch users.', error: error.message })
+  }
+})
+
 router.get('/users/:id', async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select('-password')

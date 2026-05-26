@@ -2,6 +2,7 @@ const express = require('express')
 const Team = require('../models/Team')
 const TeamJoinRequest = require('../models/TeamJoinRequest')
 const Notification = require('../models/Notification')
+const User = require('../models/User')
 
 const router = express.Router()
 
@@ -196,6 +197,17 @@ router.patch('/leave', async (req, res) => {
       time: 'just now',
     })
 
+    // Clear team info on the user record if present
+    try {
+      const user = await User.findOne({ email: approvedRequest.requesterEmail.toLowerCase() })
+      if (user) {
+        user.teamInfo = { teamId: null, teamName: '', captainName: '' }
+        await user.save()
+      }
+    } catch (_e) {
+      // ignore user update failures
+    }
+
     return res.json({ message: 'You have left the team.', request: approvedRequest })
   } catch (error) {
     return res.status(500).json({ message: 'Failed to leave team.', error: error.message })
@@ -209,10 +221,20 @@ router.patch('/:id/approve', async (req, res) => {
       return res.status(404).json({ message: 'Join request not found.' })
     }
 
+    // Approve this request
     request.status = 'approved'
     request.reviewedAt = new Date()
     await request.save()
 
+    // Mark other previously approved requests for this email as left (single membership)
+    try {
+      await TeamJoinRequest.updateMany(
+        { requesterEmail: request.requesterEmail, _id: { $ne: request._id }, status: 'approved' },
+        { $set: { status: 'left', reviewedAt: new Date() } }
+      )
+    } catch (_e) {}
+
+    // Update notifications related to this request
     await Notification.updateMany(
       { joinRequestId: request._id },
       {
@@ -224,6 +246,21 @@ router.patch('/:id/approve', async (req, res) => {
         },
       }
     )
+
+    // Update the user record to reflect new team membership (overwrite existing)
+    try {
+      const user = await User.findOne({ email: request.requesterEmail.toLowerCase() })
+      if (user) {
+        user.teamInfo = {
+          teamId: request.teamId || null,
+          teamName: request.teamName || request.teamUid || '',
+          captainName: request.captainName || '',
+        }
+        await user.save()
+      }
+    } catch (_e) {
+      // ignore user update failures
+    }
 
     return res.json({ message: 'Join request approved.', request })
   } catch (error) {

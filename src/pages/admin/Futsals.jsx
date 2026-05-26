@@ -1,7 +1,9 @@
 import React, { useState } from 'react'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
-import { futsalPartners as init } from '../../data/mockData.js'
+import { futsalPartners as init, users as mockUsers } from '../../data/mockData.js'
+import { useEffect } from 'react'
+import { fetchApiJson } from '../../utils/apiClient.js'
 
 export default function Futsals() {
   const [list,   setList]   = useState(init)
@@ -10,6 +12,24 @@ export default function Futsals() {
   const [toast,  setToast]  = useState('')
   const [form,   setForm]   = useState({ name:'', owner:'', location:'', courts:'1' })
 
+  const [ownerOptions, setOwnerOptions] = React.useState(() => mockUsers.filter(u => u.role && u.role.toLowerCase().includes('owner')))
+
+  useEffect(() => {
+    let mounted = true
+    const loadOwners = async () => {
+      try {
+        const { response, data } = await fetchApiJson('/users?role=owner')
+        if (response.ok && mounted && Array.isArray(data)) {
+          setOwnerOptions(data.map(u => ({ id: u._id || u.id, name: u.name, email: u.email })))
+        }
+      } catch (_e) {
+        // ignore and keep mock owners
+      }
+    }
+    loadOwners()
+    return () => { mounted = false }
+  }, [])
+
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
   const approve = id => {
@@ -17,10 +37,41 @@ export default function Futsals() {
     toast$('✅ Partner approved!')
   }
 
-  const add = () => {
+  const add = async () => {
     if (!form.name || !form.owner || !form.location) return
-    setList(prev => [...prev, { id:prev.length+1, ...form, courts:+form.courts, status:'pending', joined: new Date().toISOString().split('T')[0], bookings:0 }])
-    setModal(false); setForm({ name:'', owner:'', location:'', courts:'1' })
+
+    // try to persist to backend; fall back to local mock list
+    try {
+      const ownerObj = ownerOptions.find(o => o.name === form.owner) || {}
+      const body = {
+        name: form.name,
+        location: form.location,
+        rating: 4.5,
+        price: 'Rs. 1,200/hr',
+        type: 'Indoor',
+        courts: Number(form.courts) || 1,
+        pricePerHour: 1200,
+        owner: ownerObj.name || form.owner,
+        ownerEmail: ownerObj.email || ''
+      }
+
+      const { response, data } = await fetchApiJson('/venues', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+      if (response.ok && data?.venue) {
+        const v = data.venue
+        setList(prev => [...prev, { id: prev.length + 1, name: v.name, owner: v.owner || body.owner, location: v.location, courts: v.courts || body.courts, status: 'pending', joined: new Date().toISOString().split('T')[0], bookings: 0 }])
+      } else {
+        setList(prev => [...prev, { id: prev.length + 1, ...form, courts: +form.courts, status: 'pending', joined: new Date().toISOString().split('T')[0], bookings: 0 }])
+      }
+    } catch (_e) {
+      setList(prev => [...prev, { id: prev.length + 1, ...form, courts: +form.courts, status: 'pending', joined: new Date().toISOString().split('T')[0], bookings: 0 }])
+    }
+
+    setModal(false); setForm({ name: '', owner: '', location: '', courts: '1' })
     toast$('✅ New partner added!')
   }
 
@@ -112,7 +163,6 @@ export default function Futsals() {
             </div>
             {[
               { lbl:'Venue Name', key:'name',     type:'text',   ph:'e.g. Star Futsal Arena' },
-              { lbl:'Owner Name', key:'owner',    type:'text',   ph:'Owner full name' },
               { lbl:'Location',   key:'location', type:'text',   ph:'e.g. Thamel, Kathmandu' },
               { lbl:'Courts',     key:'courts',   type:'number', ph:'1' },
             ].map(f => (
@@ -122,6 +172,16 @@ export default function Futsals() {
                   value={form[f.key]} onChange={e => setForm({...form,[f.key]:e.target.value})} />
               </div>
             ))}
+
+            <div className="form-group">
+              <label className="form-label">Owner Name</label>
+              <select className="form-control" value={form.owner} onChange={e => setForm({...form, owner:e.target.value})}>
+                <option value="">-- Select owner --</option>
+                {ownerOptions.map(o => (
+                  <option key={o.id} value={o.name}>{o.name} {o.email?`(${o.email})`:''}</option>
+                ))}
+              </select>
+            </div>
             <div style={{ display:'flex', gap:10, marginTop:8 }}>
               <button className="btn btn-primary" style={{ flex:1 }} onClick={add}>
                 <i className="fas fa-plus" /> Add Partner

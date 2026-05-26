@@ -105,11 +105,42 @@ export default function Login() {
 
     const loadOwners = async () => {
       try {
+        const mergeOwners = (primary, fallback) => {
+          const map = new Map()
+          ;[...primary, ...fallback].forEach(owner => {
+            const key = owner.email || owner.id || owner.label
+            if (!key || map.has(key)) return
+            map.set(key, owner)
+          })
+          return [...map.values()].sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }))
+        }
+
+        let usersFromApi = []
+        try {
+          const { response, data } = await fetchApiJson('/users?role=owner')
+          if (response.ok && Array.isArray(data)) {
+            usersFromApi = data
+              .filter(user => user.email && user.name)
+              .map((user, index) => ({
+                id: user._id || user.id || `owner-user-${index + 1}`,
+                uid: formatUid(user.uid),
+                email: user.email,
+                name: user.name,
+                venue: user.ownerProfile?.venueName || '',
+                label: user.ownerProfile?.venueName
+                  ? `${user.name} (${user.ownerProfile.venueName})`
+                  : user.name,
+              }))
+          }
+        } catch (_apiError) {
+          // fall through to venue-based owners
+        }
+
         try {
           const { response, data } = await fetchApiJson('/venues')
 
           if (response.ok && Array.isArray(data) && data.length > 0) {
-            const ownersFromApi = data
+            const ownersFromVenues = data
               .filter(venue => venue.owner && venue.ownerEmail)
               .map((venue, index) => ({
                 id: venue._id || venue.id || `owner-${index + 1}`,
@@ -121,9 +152,10 @@ export default function Login() {
               }))
               .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }))
 
+            const owners = mergeOwners(usersFromApi, ownersFromVenues)
             if (!active) return
-            setOwnerOptions(ownersFromApi)
-            setF(prev => ({ ...prev, email: ownersFromApi[0]?.email || '' }))
+            setOwnerOptions(owners)
+            setF(prev => ({ ...prev, email: owners[0]?.email || '' }))
             return
           }
         } catch (_apiError) {
@@ -142,15 +174,15 @@ export default function Login() {
           }))
           .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }))
 
-        const owners = ownersFromMockVenues.length > 0
-          ? ownersFromMockVenues
-          : futsalPartners.map((partner) => ({
-              id: partner.id,
-              email: `${partner.owner.toLowerCase().replace(/\s+/g, '.')}@fotmatch.com`,
-              name: partner.owner,
-              venue: partner.name,
-              label: `${partner.owner} (${partner.name})`,
-            }))
+        const mockOwnerUsers = futsalPartners.map((partner) => ({
+          id: partner.id,
+          email: `${partner.owner.toLowerCase().replace(/\s+/g, '.')}@fotmatch.com`,
+          name: partner.owner,
+          venue: partner.name,
+          label: `${partner.owner} (${partner.name})`,
+        }))
+
+        const owners = mergeOwners(usersFromApi, ownersFromMockVenues.length > 0 ? ownersFromMockVenues : mockOwnerUsers)
 
         if (!active) return
         setOwnerOptions(owners)
