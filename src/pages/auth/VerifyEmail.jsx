@@ -1,8 +1,7 @@
 import React, { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+import { fetchApiJson } from '../../utils/apiClient.js'
 
 const formatUid = value => {
   const digits = String(value || '').replace(/\D/g, '')
@@ -15,7 +14,9 @@ export default function VerifyEmail() {
   const navigate = useNavigate()
   const { setUser } = useAuth()
   const email = (state && state.email) || ''
+  const role = (state && state.role) || (state && state.team ? 'team' : 'owner')
   const team = (state && state.team) || null
+  const owner = (state && state.owner) || null
 
   const [otp, setOtp] = useState('')
   const [password, setPassword] = useState('')
@@ -24,7 +25,8 @@ export default function VerifyEmail() {
   const [loading, setLoading] = useState(false)
 
   const submit = async e => {
-    e.preventDefault(); setErr('')
+    e.preventDefault()
+    setErr('')
     if (!otp || otp.length < 4) return setErr('Enter the OTP sent to your email')
     if (team) {
       if (!password || password.length < 6) return setErr('Password must be at least 6 characters')
@@ -36,47 +38,67 @@ export default function VerifyEmail() {
       const body = { email, otp }
       if (team) body.password = password
 
-      const res = await fetch(`${API_BASE}/auth/verify-otp`, {
+      const { response: res, data } = await fetchApiJson('/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
 
-      const data = await res.json()
-      if (!res.ok) return setErr(data.message || 'Verification failed')
-
-      // On success, finalize login using team data if present
-      if (team) {
-        setUser({
-          id: team._id,
-          uid: formatUid(team.uid),
-          name: team.captainName,
-          email,
-          role: 'team',
-          teamProfileCompleted: team.teamProfileCompleted,
-          eloRating: team.eloRating,
-          eloMatchesPlayed: team.eloMatchesPlayed || 0,
-          teamName: team.teamName || '',
-          teamInfo: {
-            name: team.teamName || '',
-            teamName: team.teamName || '',
-            location: team.location || '',
-            skill: team.skill || 'Intermediate',
-            lat: team.lat,
-            lng: team.lng,
-            preferredDay: team.preferredDay || 'Saturday',
-            preferredTime: team.preferredTime || '06:00 PM',
-            currentElo: team.eloRating,
-          },
-        })
-        navigate(team.teamProfileCompleted ? '/team' : '/team/choice')
+      if (!res.ok) {
+        setErr(data.message || 'Verification failed')
+        setLoading(false)
         return
       }
 
-      // Otherwise redirect to login
-      navigate('/login')
-    } catch (_err) {
-      setErr('Unable to verify code. Try again.')
+      // Prefer the team returned by the server (created during verification)
+      const verifiedTeam = data && data.team ? data.team : team
+      const verifiedUser = data && data.user ? data.user : null
+
+      if (verifiedTeam) {
+        setUser({
+          id: verifiedTeam._id,
+          uid: formatUid(verifiedTeam.uid),
+          name: verifiedTeam.captainName || verifiedTeam.name || '',
+          email,
+          role: 'team',
+          teamProfileCompleted: verifiedTeam.teamProfileCompleted,
+          eloRating: verifiedTeam.eloRating || 1000,
+          eloMatchesPlayed: verifiedTeam.eloMatchesPlayed || 0,
+          teamName: verifiedTeam.teamName || '',
+        })
+
+        navigate(verifiedTeam.teamProfileCompleted ? '/team' : '/team/choice')
+        return
+      }
+
+      if (role === 'owner' || verifiedUser?.role === 'owner') {
+        setUser({
+          id: verifiedUser?._id,
+          name: verifiedUser?.name || owner?.name || 'Futsal Owner',
+          email,
+          role: 'owner',
+          profileCompleted: Boolean(verifiedUser?.profileCompleted),
+          ownerProfile: verifiedUser?.ownerProfile || {
+            venueName: '',
+            location: '',
+            lat: null,
+            lng: null,
+            courts: 0,
+            phone: '',
+            hours: '',
+            locationVerified: false,
+          },
+          venueName: verifiedUser?.ownerProfile?.venueName || '',
+        })
+        navigate('/owner/profile')
+        return
+      }
+
+      // Fallback: navigate home if no team data is available
+      navigate('/')
+    } catch (err) {
+      console.error('verify submit error', err)
+      setErr('Verification failed')
     } finally {
       setLoading(false)
     }
@@ -84,7 +106,7 @@ export default function VerifyEmail() {
 
   const resend = async () => {
     try {
-      await fetch(`${API_BASE}/auth/resend-otp`, {
+      await fetchApiJson('/auth/resend-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),

@@ -2,8 +2,9 @@ import React, { useMemo, useState, useEffect } from 'react'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
 import { useAuth } from '../../App.jsx'
+import { getApiBaseUrl } from '../../utils/apiConfig.js'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+const API_BASE = getApiBaseUrl()
 
 const HOUR_SLOTS = Array.from({ length: 17 }, (_, index) => {
   const hour = index + 6

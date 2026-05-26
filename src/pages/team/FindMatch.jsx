@@ -4,8 +4,9 @@ import Topbar  from '../../components/Topbar.jsx'
 import { teams as mockTeams, LOCATION_COORDS } from '../../data/mockData.js'
 import { useAuth } from '../../App.jsx'
 import { emitChallengeCreate, onChallengeCreated } from '../../utils/socketService.js'
+import { getApiBaseUrl } from '../../utils/apiConfig.js'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+const API_BASE = getApiBaseUrl()
 
 /* Seed open match posts visible to everyone */
 const SEED_POSTS = []

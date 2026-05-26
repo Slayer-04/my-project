@@ -7,6 +7,7 @@ const NAV = {
     { label:'Home',        icon:'fa-house',          path:'/team' },
     { label:'Find Match',  icon:'fa-bolt',           path:'/team/find-match' },
     { label:'Book Futsal', icon:'fa-calendar-check', path:'/team/book-futsal' },
+    { label:'Members',     icon:'fa-users',          path:'/team/members' },
     { label:'Profile',     icon:'fa-user',           path:'/team/profile' },
   ],
   owner: [

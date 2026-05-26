@@ -1,34 +1,55 @@
 const express = require('express')
 const Team = require('../models/Team')
+const PendingRegistration = require('../models/PendingRegistration')
+const User = require('../models/User')
+const bcrypt = require('bcryptjs')
 const { rankTeamsByCompatibility } = require('../algorithms/compatibility')
 
 const router = express.Router()
 
+// Create a pending registration — the real Team record will be created after OTP verification
 router.post('/register', async (req, res) => {
   try {
-    const { captainName, email } = req.body
+    const { captainName, email, password, confirmPassword } = req.body
 
     if (!captainName || !email) {
       return res.status(400).json({ message: 'captainName and email are required.' })
     }
 
-    const existing = await Team.findOne({ email: email.trim().toLowerCase() })
+    if (!password || !confirmPassword) {
+      return res.status(400).json({ message: 'Password and confirm password are required.' })
+    }
+
+    if (String(password) !== String(confirmPassword)) {
+      return res.status(400).json({ message: 'Passwords do not match.' })
+    }
+
+    if (String(password).length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters.' })
+    }
+
+    const normalizedEmail = email.trim().toLowerCase()
+
+    const existing = await Team.findOne({ email: normalizedEmail })
     if (existing) {
       return res.status(409).json({ message: 'Team account already exists for this email.' })
     }
 
-    const team = await Team.create({
-      captainName: captainName.trim(),
-      email: email.trim().toLowerCase(),
-      teamProfileCompleted: false,
-    })
+    const existingUser = await User.findOne({ email: normalizedEmail })
+    if (existingUser) {
+      return res.status(409).json({ message: existingUser.verified ? 'An account already exists for this email.' : 'This email is already pending verification.' })
+    }
 
-    return res.status(201).json({
-      message: 'Team account created. Complete profile on first login.',
-      team,
-    })
+    const alreadyPending = await PendingRegistration.findOne({ email: normalizedEmail })
+    if (alreadyPending) {
+      return res.status(200).json({ message: 'Pending registration already created. Please verify your email.', pending: true })
+    }
+
+    const pending = await PendingRegistration.create({ captainName: captainName.trim(), email: normalizedEmail, role: 'team' })
+
+    return res.status(201).json({ message: 'Pending registration created. Verify your email to complete registration.', pending: true })
   } catch (error) {
-    return res.status(500).json({ message: 'Failed to register team.', error: error.message })
+    return res.status(500).json({ message: 'Failed to create pending registration.', error: error.message })
   }
 })
 

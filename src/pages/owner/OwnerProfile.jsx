@@ -1,30 +1,121 @@
-import React, { useState } from 'react'
+import React, { lazy, Suspense, useMemo, useState } from 'react'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
 import { useAuth } from '../../App.jsx'
-import { bookings } from '../../data/mockData.js'
+import { fetchApiJson } from '../../utils/apiClient.js'
+
+const LocationPicker = lazy(() => import('../../components/LocationPicker.jsx'))
 
 export default function OwnerProfile() {
-  const { user } = useAuth()
-  const [editing, setEditing] = useState(false)
+  const { user, setUser, bookings } = useAuth()
+  const ownerProfile = user?.ownerProfile || {}
+
+  const [editing, setEditing] = useState(!user?.profileCompleted)
   const formatUid = value => {
     const digits = String(value || '').replace(/\D/g, '')
     if (!digits) return 'Pending'
     return digits.length >= 8 ? digits.slice(-8) : digits.padStart(8, '0')
   }
   const venueUid = formatUid(user?.venueUid || user?.venueId)
+  const defaultInfo = useMemo(() => ({
+    venueName: ownerProfile.venueName || user?.venueName || '',
+    location: ownerProfile.location || '',
+    lat: Number.isFinite(Number(ownerProfile.lat)) ? Number(ownerProfile.lat) : 27.7172,
+    lng: Number.isFinite(Number(ownerProfile.lng)) ? Number(ownerProfile.lng) : 85.3240,
+    locationVerified: Boolean(ownerProfile.locationVerified),
+    courts: ownerProfile.courts ? String(ownerProfile.courts) : '',
+    phone: ownerProfile.phone || '',
+    hours: ownerProfile.hours || '',
+  }), [ownerProfile.courts, ownerProfile.hours, ownerProfile.lat, ownerProfile.lng, ownerProfile.location, ownerProfile.locationVerified, ownerProfile.phone, ownerProfile.venueName, user?.venueName])
   const [info, setInfo] = useState({
-    venueName: 'Arena Futsal Park',
-    location:  'Baneshwor, Kathmandu',
-    courts:    '2',
-    phone:     '+977-9801234567',
-    hours:     '6:00 AM – 10:00 PM',
+    venueName: defaultInfo.venueName,
+    location: defaultInfo.location,
+    lat: defaultInfo.lat,
+    lng: defaultInfo.lng,
+    locationVerified: defaultInfo.locationVerified,
+    courts: defaultInfo.courts,
+    phone: defaultInfo.phone,
+    hours: defaultInfo.hours,
   })
   const [toast, setToast] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [showMap, setShowMap] = useState(false)
 
-  const save = () => { setEditing(false); setToast('✅ Profile saved!'); setTimeout(() => setToast(''), 3000) }
+  const ownerBookings = bookings.filter(b => {
+    const byVenue = info.venueName && b.venue === info.venueName
+    const byEmail = user?.email && String(b.ownerEmail || '').toLowerCase() === String(user.email).toLowerCase()
+    const byName = user?.name && String(b.ownerName || '').toLowerCase() === String(user.name).toLowerCase()
+    return byVenue || byEmail || byName
+  })
 
-  const totalRev = bookings.filter(b => b.status==='confirmed')
+  const save = async () => {
+    const venueName = String(info.venueName || '').trim()
+    const location = String(info.location || '').trim()
+    if (!venueName || !location) {
+      setToast('Please provide venue name and location.')
+      setTimeout(() => setToast(''), 3000)
+      return
+    }
+
+    if (!info.locationVerified || !Number.isFinite(Number(info.lat)) || !Number.isFinite(Number(info.lng))) {
+      setToast('Please pick and confirm exact location on map.')
+      setTimeout(() => setToast(''), 3000)
+      return
+    }
+
+    setSaving(true)
+    try {
+      const ownerPayload = {
+        venueName,
+        location,
+        lat: Number(info.lat),
+        lng: Number(info.lng),
+        locationVerified: true,
+        courts: Number(info.courts) || 0,
+        phone: String(info.phone || '').trim(),
+        hours: String(info.hours || '').trim(),
+      }
+
+      if (user?.id) {
+        const { response, data } = await fetchApiJson(`/users/${user.id}/profile`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ownerProfile: ownerPayload }),
+        })
+
+        if (!response.ok) {
+          setToast(data.message || 'Failed to save profile.')
+          setTimeout(() => setToast(''), 3000)
+          return
+        }
+
+        setUser(prev => ({
+          ...prev,
+          profileCompleted: true,
+          ownerProfile: data.user?.ownerProfile || ownerPayload,
+          venueName: (data.user?.ownerProfile?.venueName || ownerPayload.venueName),
+        }))
+      } else {
+        setUser(prev => ({
+          ...prev,
+          profileCompleted: true,
+          ownerProfile: ownerPayload,
+          venueName: ownerPayload.venueName,
+        }))
+      }
+
+      setEditing(false)
+      setToast('✅ Profile saved!')
+      setTimeout(() => setToast(''), 3000)
+    } catch (_error) {
+      setToast('Unable to save profile right now.')
+      setTimeout(() => setToast(''), 3000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const totalRev = ownerBookings.filter(b => b.status==='confirmed')
     .reduce((acc, b) => acc + parseInt(b.amount.replace(/[^0-9]/g, '')), 0)
 
   return (
@@ -39,13 +130,14 @@ export default function OwnerProfile() {
           <div className="profile-hero anim-1" style={{ background:'linear-gradient(130deg, #1a6fe8 0%, #006b3c 100%)' }}>
             <div className="ph-avatar">🏟️</div>
             <div style={{ flex:1 }}>
-              <div className="ph-name">{info.venueName}</div>
-              <div className="ph-sub"><i className="fas fa-location-dot" style={{ marginRight:5 }} />{info.location}</div>
+              <div className="ph-name">{info.venueName || 'Set your venue name'}</div>
+              <div className="ph-sub"><i className="fas fa-location-dot" style={{ marginRight:5 }} />{info.location || 'Set your venue location'}</div>
               <div className="ph-tags">
-                <span className="ph-tag">{info.courts} Courts</span>
-                <span className="ph-tag">{info.hours}</span>
+                <span className="ph-tag">{info.courts || '0'} Courts</span>
+                <span className="ph-tag">{info.hours || 'Hours pending'}</span>
                 <span className="ph-tag">UID {venueUid}</span>
-                <span className="ph-tag">Verified Partner</span>
+                <span className="ph-tag">{Number(info.lat).toFixed(4)}, {Number(info.lng).toFixed(4)}</span>
+                <span className="ph-tag">{user?.profileCompleted ? 'Verified Partner' : 'Profile Incomplete'}</span>
               </div>
             </div>
             <div className="ph-actions">
@@ -68,7 +160,6 @@ export default function OwnerProfile() {
                   <>
                     {[
                       { lbl:'Venue Name',   key:'venueName', type:'text' },
-                      { lbl:'Location',     key:'location',  type:'text' },
                       { lbl:'Courts',       key:'courts',    type:'number' },
                       { lbl:'Phone',        key:'phone',     type:'text' },
                       { lbl:'Operating Hours', key:'hours',  type:'text' },
@@ -82,18 +173,46 @@ export default function OwnerProfile() {
                         />
                       </div>
                     ))}
+
+                    <div className="form-group">
+                      <label className="form-label">Location</label>
+                      <div style={{ display:'flex', gap:8 }}>
+                        <input
+                          className="form-control"
+                          value={info.location}
+                          placeholder="Pick exact location from map"
+                          readOnly
+                          style={{ background: info.locationVerified ? '#f0fdf4' : '#fff', cursor:'default' }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={() => setShowMap(true)}
+                          style={{ flexShrink:0, whiteSpace:'nowrap' }}
+                        >
+                          <i className="fas fa-map-marker-alt" /> Pick on Map
+                        </button>
+                      </div>
+                      <div style={{ fontSize:12, marginTop:5, color: info.locationVerified ? 'var(--green)' : '#8a96a8' }}>
+                        {info.locationVerified
+                          ? `Location verified at (${Number(info.lat).toFixed(4)}, ${Number(info.lng).toFixed(4)})`
+                          : 'Exact map point required for algorithm.'}
+                      </div>
+                    </div>
+
                     <button className="btn btn-primary btn-full" onClick={save}>
-                      <i className="fas fa-floppy-disk" /> Save Changes
+                      <i className="fas fa-floppy-disk" /> {saving ? 'Saving…' : 'Save Changes'}
                     </button>
                   </>
                 ) : (
                   <>
                     {[
-                      { lbl:'Venue Name',   val: info.venueName,  icon:'fa-building' },
-                      { lbl:'Location',     val: info.location,   icon:'fa-location-dot' },
-                      { lbl:'Courts',       val: info.courts,     icon:'fa-table-tennis-paddle-ball' },
-                      { lbl:'Phone',        val: info.phone,      icon:'fa-phone' },
-                      { lbl:'Hours',        val: info.hours,      icon:'fa-clock' },
+                      { lbl:'Venue Name',   val: info.venueName || '-',  icon:'fa-building' },
+                      { lbl:'Location',     val: info.location || '-',   icon:'fa-location-dot' },
+                      { lbl:'Coordinates',  val: `${Number(info.lat).toFixed(4)}, ${Number(info.lng).toFixed(4)}`, icon:'fa-map-pin' },
+                      { lbl:'Courts',       val: info.courts || '0',     icon:'fa-table-tennis-paddle-ball' },
+                      { lbl:'Phone',        val: info.phone || '-',      icon:'fa-phone' },
+                      { lbl:'Hours',        val: info.hours || '-',      icon:'fa-clock' },
                       { lbl:'Owner',        val: user?.name,      icon:'fa-user-tie' },
                     ].map(item => (
                       <div key={item.lbl} style={{ display:'flex', justifyContent:'space-between', padding:'10px 0', borderBottom:'1px solid #f0f4f8' }}>
@@ -114,10 +233,10 @@ export default function OwnerProfile() {
               <div className="card-bd">
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:20 }}>
                   {[
-                    { lbl:'Total Bookings', val: bookings.length,  bg:'#e8f0fd', c:'var(--blue)' },
-                    { lbl:'Confirmed',      val: bookings.filter(b=>b.status==='confirmed').length, bg:'#e6faf2', c:'var(--green)' },
-                    { lbl:'Pending',        val: bookings.filter(b=>b.status==='pending').length,   bg:'#fefce8', c:'#ca8a04' },
-                    { lbl:'Cancelled',      val: bookings.filter(b=>b.status==='cancelled').length, bg:'#fff5f5', c:'var(--red)' },
+                    { lbl:'Total Bookings', val: ownerBookings.length, bg:'#e8f0fd', c:'var(--blue)' },
+                    { lbl:'Confirmed',      val: ownerBookings.filter(b => b.status === 'confirmed').length, bg:'#e6faf2', c:'var(--green)' },
+                    { lbl:'Pending',        val: ownerBookings.filter(b => b.status === 'pending').length, bg:'#fefce8', c:'#ca8a04' },
+                    { lbl:'Cancelled',      val: ownerBookings.filter(b => b.status === 'cancelled').length, bg:'#fff5f5', c:'var(--red)' },
                   ].map(s => (
                     <div key={s.lbl} style={{ textAlign:'center', padding:'14px 8px', background:s.bg, borderRadius:12 }}>
                       <div style={{ fontFamily:'Barlow Condensed,sans-serif', fontSize:26, fontWeight:900, color:s.c, lineHeight:1 }}>{s.val}</div>
@@ -150,6 +269,23 @@ export default function OwnerProfile() {
           </div>
         </div>
       </div>
+
+      {showMap && (
+        <Suspense fallback={null}>
+          <LocationPicker
+            initialLat={Number(info.lat) || 27.7172}
+            initialLng={Number(info.lng) || 85.3240}
+            onConfirm={loc => setInfo(prev => ({
+              ...prev,
+              location: loc.address,
+              lat: loc.lat,
+              lng: loc.lng,
+              locationVerified: true,
+            }))}
+            onClose={() => setShowMap(false)}
+          />
+        </Suspense>
+      )}
     </div>
   )
 }

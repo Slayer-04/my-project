@@ -1,4 +1,5 @@
 import io from 'socket.io-client'
+import { getSocketUrl } from './apiConfig.js'
 
 // Single socket instance for entire app
 let socket = null
@@ -13,7 +14,7 @@ export const initSocket = () => {
     return socket
   }
 
-  const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000'
+  const SOCKET_URL = getSocketUrl()
 
   try {
     socket = io(SOCKET_URL, {

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { useAuth } from '../App.jsx'
 import { selectOptimalMatchLocation } from '../utils/venueSelector.js'
+import { getApiBaseUrl } from '../utils/apiConfig.js'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+const API_BASE = getApiBaseUrl()
 
 export default function Topbar({ title, breadcrumb }) {
   const { user, notifications, setNotifications, challenges, setChallenges, bookings, setBookings } = useAuth()

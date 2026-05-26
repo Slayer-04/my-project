@@ -15,6 +15,16 @@ const UserSchema = new mongoose.Schema(
       teamName: { type: String, default: '', trim: true },
       captainName: { type: String, default: '', trim: true },
     },
+    ownerProfile: {
+      venueName: { type: String, default: '', trim: true },
+      location: { type: String, default: '', trim: true },
+      lat: { type: Number, default: null },
+      lng: { type: Number, default: null },
+      courts: { type: Number, default: 0, min: 0 },
+      phone: { type: String, default: '', trim: true },
+      hours: { type: String, default: '', trim: true },
+      locationVerified: { type: Boolean, default: false },
+    },
     status: {
       type: String,
       enum: ['active', 'inactive', 'suspended'],

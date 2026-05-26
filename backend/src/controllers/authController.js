@@ -1,4 +1,6 @@
 const User = require('../models/User')
+const Team = require('../models/Team')
+const PendingRegistration = require('../models/PendingRegistration')
 const { generateOtp, hashOtp, compareOtpHash } = require('../utils/otpUtils')
 const bcrypt = require('bcryptjs')
 const { sendOtpEmail } = require('../utils/emailUtils')
@@ -9,19 +11,54 @@ const MAX_ATTEMPTS = Number(process.env.OTP_MAX_ATTEMPTS || 5)
 // POST /api/auth/send-otp
 const sendOtp = async (req, res) => {
   const { email } = req.body
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : ''
+  const role = req.body?.role === 'owner' ? 'owner' : 'team'
+  const password = typeof req.body?.password === 'string' ? req.body.password : ''
+  const confirmPassword = typeof req.body?.confirmPassword === 'string' ? req.body.confirmPassword : ''
   if (!email) return res.status(400).json({ message: 'Email required' })
 
   try {
     let user = await User.findOne({ email: email.toLowerCase() })
+
+    if (user && user.verified) {
+      return res.status(409).json({ message: 'An account already exists for this email.' })
+    }
+
+    if (password || confirmPassword) {
+      if (!password || !confirmPassword) {
+        return res.status(400).json({ message: 'Password and confirm password are required.' })
+      }
+      if (password !== confirmPassword) {
+        return res.status(400).json({ message: 'Passwords do not match.' })
+      }
+      if (password.length < 6) {
+        return res.status(400).json({ message: 'Password must be at least 6 characters.' })
+      }
+    }
+
+    const fallbackName = name || String(email).split('@')[0] || 'User'
+    const shouldCreateUser = !user
+
     if (!user) {
-      // Create minimal user record (password must be set later)
-      const fallbackName = String(email).split('@')[0] || 'User'
-      user = await User.create({ email: email.toLowerCase(), name: fallbackName, password: 'placeholder', role: 'team' })
+      if (!password) {
+        return res.status(400).json({ message: 'Password is required for new accounts.' })
+      }
+      const salt = await bcrypt.genSalt(10)
+      const passwordHash = await bcrypt.hash(password, salt)
+      user = await User.create({ email: email.toLowerCase(), name: fallbackName, password: passwordHash, role, verified: false })
+    } else {
+      if (name) user.name = name
+      user.role = role
+      if (password) {
+        const salt = await bcrypt.genSalt(10)
+        user.password = await bcrypt.hash(password, salt)
+      }
     }
 
     const otp = generateOtp(6)
     const codeHash = await hashOtp(otp)
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000)
+
 
     user.otp = { codeHash, expiresAt, attempts: 0 }
     await user.save()
@@ -32,6 +69,71 @@ const sendOtp = async (req, res) => {
     return res.json({ ok: true, message: 'OTP sent' })
   } catch (err) {
     console.error('sendOtp error', err.message)
+    return res.status(500).json({ message: 'Server error' })
+  }
+}
+
+// POST /api/auth/login
+const login = async (req, res) => {
+  const { email, password, role } = req.body
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password required.' })
+  }
+
+  try {
+    const user = await User.findOne({ email: email.toLowerCase() })
+    if (!user) {
+      return res.status(404).json({ message: 'Account not found.' })
+    }
+
+    if (role && user.role !== role) {
+      return res.status(403).json({ message: 'Account role does not match.' })
+    }
+
+    if (!user.verified) {
+      return res.status(403).json({ message: 'Please verify your email first.' })
+    }
+
+    const ok = await bcrypt.compare(password, user.password)
+    if (!ok) {
+      return res.status(401).json({ message: 'Incorrect password.' })
+    }
+
+    user.lastLogin = new Date()
+    await user.save()
+
+    if (user.role === 'team') {
+      const team = await Team.findOne({ email: user.email })
+      return res.json({
+        ok: true,
+        user: {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          teamInfo: user.teamInfo,
+          teamProfileCompleted: team?.teamProfileCompleted || false,
+          ownerProfile: user.ownerProfile,
+          verified: user.verified,
+        },
+        team: team || null,
+      })
+    }
+
+    return res.json({
+      ok: true,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        ownerProfile: user.ownerProfile,
+        profileCompleted: user.profileCompleted,
+        verified: user.verified,
+      },
+    })
+  } catch (err) {
+    console.error('login error', err.message)
     return res.status(500).json({ message: 'Server error' })
   }
 }
@@ -78,7 +180,41 @@ const verifyOtp = async (req, res) => {
     user.otp = { codeHash: null, expiresAt: null, attempts: 0 }
     await user.save()
 
-    return res.json({ ok: true, message: 'Email verified' })
+    // If there is a pending registration for this email, finalize it by creating the Team
+    try {
+      const pending = await PendingRegistration.findOne({ email: user.email })
+      if (pending) {
+        if (pending.role === 'team') {
+          // Ensure no existing team (race-safe)
+          const existingTeam = await Team.findOne({ email: user.email })
+          let createdTeam = null
+          if (!existingTeam) {
+            createdTeam = await Team.create({
+              captainName: pending.captainName || user.name || 'Team',
+              email: user.email,
+              teamProfileCompleted: false,
+            })
+          }
+
+          // Remove pending registration record
+          await PendingRegistration.deleteOne({ _id: pending._id })
+
+          return res.json({ ok: true, message: 'Email verified', team: createdTeam || existingTeam, user: { _id: user._id, name: user.name, email: user.email, role: user.role } })
+        }
+
+        user.name = pending.captainName || user.name || 'Owner'
+        user.role = 'owner'
+        await user.save()
+        await PendingRegistration.deleteOne({ _id: pending._id })
+
+        return res.json({ ok: true, message: 'Email verified', user: { _id: user._id, name: user.name, email: user.email, role: user.role } })
+      }
+    } catch (err) {
+      console.error('finalize pending registration error', err.message)
+      // Fall through and return verification success even if team creation failed
+    }
+
+    return res.json({ ok: true, message: 'Email verified', user: { _id: user._id, name: user.name, email: user.email, role: user.role } })
   } catch (err) {
     console.error('verifyOtp error', err.message)
     return res.status(500).json({ message: 'Server error' })
@@ -93,11 +229,14 @@ const resendOtp = async (req, res) => {
   try {
     const user = await User.findOne({ email: email.toLowerCase() })
     if (!user) return res.status(404).json({ message: 'User not found' })
+    const role = user.role === 'owner' ? 'owner' : 'team'
 
     const otp = generateOtp(6)
     const codeHash = await hashOtp(otp)
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000)
 
+
+    user.role = role
     user.otp = { codeHash, expiresAt, attempts: 0 }
     await user.save()
 
@@ -111,4 +250,4 @@ const resendOtp = async (req, res) => {
   }
 }
 
-module.exports = { sendOtp, verifyOtp, resendOtp }
+module.exports = { sendOtp, verifyOtp, resendOtp, login }

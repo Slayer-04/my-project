@@ -118,14 +118,7 @@ export const venues = [
 ]
 
 /* ─── BOOKINGS ───────────────────────────────────────────────────────────── */
-export const bookings = [
-  {id:1, team:'Thunder Strikers', venue:'Arena Futsal Park', date:'2025-03-15', time:'08:00 AM', status:'confirmed', players:10, amount:'Rs. 1,200'},
-  {id:2, team:'Green Eagles',     venue:'Champions Court',   date:'2025-03-16', time:'07:00 AM', status:'pending',   players:8,  amount:'Rs. 1,000'},
-  {id:3, team:'Red Wolves',       venue:'Goal Zone Futsal',  date:'2025-03-14', time:'06:00 AM', status:'confirmed', players:10, amount:'Rs. 1,400'},
-  {id:4, team:'Blue Phoenix',     venue:'Arena Futsal Park', date:'2025-03-17', time:'04:00 PM', status:'cancelled', players:7,  amount:'Rs. 1,200'},
-  {id:5, team:'Night Owls',       venue:'Patan Sports Hub',  date:'2025-03-18', time:'09:00 AM', status:'confirmed', players:9,  amount:'Rs. 900'},
-  {id:6, team:'Storm United',     venue:'Champions Court',   date:'2025-03-19', time:'03:00 PM', status:'pending',   players:10, amount:'Rs. 1,000'},
-]
+export const bookings = []
 
 /* ─── CHALLENGES ─────────────────────────────────────────────────────────── */
 export const challenges = [
@@ -177,33 +170,33 @@ export const matchHistory = [
 /* ─── SCHEDULE DATA ──────────────────────────────────────────────────────── */
 export const scheduleData = [
   { day:'Monday, Mar 17', slots:[
-    {time:'06:00 AM',status:'booked',   team:'Thunder Strikers'},
+    {time:'06:00 AM',status:'available'},
     {time:'08:00 AM',status:'available'},
     {time:'10:00 AM',status:'available'},
     {time:'12:00 PM',status:'blocked'},
-    {time:'02:00 PM',status:'booked',   team:'Green Eagles'},
+    {time:'02:00 PM',status:'available'},
     {time:'04:00 PM',status:'available'},
-    {time:'06:00 PM',status:'booked',   team:'Red Wolves'},
+    {time:'06:00 PM',status:'available'},
     {time:'08:00 PM',status:'available'},
   ]},
   { day:'Tuesday, Mar 18', slots:[
     {time:'06:00 AM',status:'available'},
-    {time:'08:00 AM',status:'booked',   team:'Night Owls'},
+    {time:'08:00 AM',status:'available'},
     {time:'10:00 AM',status:'available'},
     {time:'12:00 PM',status:'available'},
     {time:'02:00 PM',status:'blocked'},
-    {time:'04:00 PM',status:'booked',   team:'Blue Phoenix'},
+    {time:'04:00 PM',status:'available'},
     {time:'06:00 PM',status:'available'},
     {time:'08:00 PM',status:'available'},
   ]},
   { day:'Wednesday, Mar 19', slots:[
-    {time:'06:00 AM',status:'booked',   team:'Storm United'},
+    {time:'06:00 AM',status:'available'},
     {time:'08:00 AM',status:'available'},
-    {time:'10:00 AM',status:'booked',   team:'Thunder Strikers'},
+    {time:'10:00 AM',status:'available'},
     {time:'12:00 PM',status:'available'},
     {time:'02:00 PM',status:'available'},
     {time:'04:00 PM',status:'available'},
     {time:'06:00 PM',status:'blocked'},
-    {time:'08:00 PM',status:'booked',   team:'Green Eagles'},
+    {time:'08:00 PM',status:'available'},
   ]},
 ]

@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { bookings as seedBookings } from './data/mockData.js'
 import { challenges as seedChallenges } from './data/mockData.js'
 import { initSocket, emitUserJoin, disconnectSocket } from './utils/socketService.js'
 
@@ -16,6 +15,7 @@ import BookFutsal    from './pages/team/BookFutsal.jsx'
 import TeamProfile   from './pages/team/TeamProfile.jsx'
 import TeamChoice    from './pages/team/TeamChoice.jsx'
 import JoinTeam      from './pages/team/JoinTeam.jsx'
+import Members       from './pages/team/Members.jsx'
 
 /* ── Futsal Owner ──────────────────────── */
 import OwnerDashboard from './pages/owner/OwnerDashboard.jsx'
@@ -63,9 +63,9 @@ export default function App() {
   const [bookings, setBookings] = useState(() => {
     try {
       const stored = localStorage.getItem('fotmatch-bookings')
-      return stored ? JSON.parse(stored) : seedBookings
+      return stored ? JSON.parse(stored) : []
     } catch (_error) {
-      return seedBookings
+      return []
     }
   })
   const [challenges, setChallenges] = useState(() => {
@@ -233,6 +233,7 @@ export default function App() {
           <Route path="/team/profile"     element={<Guard role="team"><TeamProfile /></Guard>} />
           <Route path="/team/choice"      element={<Guard role="team"><TeamChoice /></Guard>} />
           <Route path="/team/join"        element={<Guard role="team"><JoinTeam /></Guard>} />
+          <Route path="/team/members"     element={<Guard role="team"><Members /></Guard>} />
 
           {/* Owner */}
           <Route path="/owner"          element={<Guard role="owner"><OwnerDashboard /></Guard>} />

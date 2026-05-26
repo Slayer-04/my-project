@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
 import { futsalPartners, teams as mockTeams, venues as mockVenues } from '../../data/mockData.js'
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+import { fetchApiJson } from '../../utils/apiClient.js'
+import { getApiBaseUrl } from '../../utils/apiConfig.js'
 
 const formatUid = value => {
   const digits = String(value || '').replace(/\D/g, '')
@@ -26,6 +26,8 @@ const DEMO = {
   admin: { name:'Super Admin',  email:'admin@fotmatch.com', role:'admin' },
 }
 
+const API_BASE = getApiBaseUrl()
+
 export default function Login() {
   const { setUser } = useAuth()
   const navigate    = useNavigate()
@@ -44,8 +46,7 @@ export default function Login() {
       try {
         // First try to fetch from API
         try {
-          const response = await fetch(`${API_BASE}/teams`)
-          const data = await response.json()
+          const { response, data } = await fetchApiJson('/teams')
 
           if (response.ok && Array.isArray(data)) {
             const sorted = data
@@ -105,8 +106,7 @@ export default function Login() {
     const loadOwners = async () => {
       try {
         try {
-          const response = await fetch(`${API_BASE}/venues`)
-          const data = await response.json()
+          const { response, data } = await fetchApiJson('/venues')
 
           if (response.ok && Array.isArray(data) && data.length > 0) {
             const ownersFromApi = data
@@ -211,143 +211,72 @@ export default function Login() {
   const submit = async e => {
     e.preventDefault(); setErr('')
     if (!f.email || !f.password) return setErr('Please fill in all fields.')
+    setLoading(true)
+    try {
+      const normalizedEmail = f.email.trim().toLowerCase()
+      const response = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: normalizedEmail, password: f.password, role: f.role }),
+      })
+      const data = await response.json()
 
-    if (f.role !== 'team') {
-      if (f.role === 'owner') {
-        setLoading(true)
-        setTimeout(() => {
-          const owner = ownerOptions.find(o => o.email === f.email)
-          setUser({
-            name: owner?.name || 'Futsal Owner',
-            email: owner?.email,
-            role: 'owner',
-            venueId: owner?.id,
-            venueUid: owner?.uid || owner?.id,
-            venueName: owner?.venue,
-          })
-          navigate('/owner')
-        }, 500)
+      if (!response.ok) {
+        setErr(data.message || 'Unable to sign in.')
         return
       }
 
-      setLoading(true)
-      setTimeout(() => {
-        setUser(DEMO[f.role])
-        navigate({ admin:'/admin' }[f.role])
-      }, 500)
-      return
-    }
+      const loggedInUser = data.user
 
-    const normalizedEmail = f.email.trim().toLowerCase()
-
-    setLoading(true)
-    try {
-      // Try API first
-      try {
-        const response = await fetch(`${API_BASE}/teams/email/${encodeURIComponent(normalizedEmail)}`)
-        const data = await response.json()
-
-        if (response.ok) {
-          setUser({
-            id: data._id,
-            uid: formatUid(data.uid),
-            name: data.captainName,
-            email: data.email,
-            role: 'team',
-            teamAccess: 'full',
-            isCaptain: true,
-            teamProfileCompleted: data.teamProfileCompleted,
-            eloRating: data.eloRating,
-            eloMatchesPlayed: data.eloMatchesPlayed || 0,
-            teamName: data.teamName || '',
-            teamInfo: {
-              name: data.teamName || '',
-              teamName: data.teamName || '',
-              location: data.location || '',
-              skill: data.skill || 'Intermediate',
-              lat: data.lat,
-              lng: data.lng,
-              preferredDay: data.preferredDay || 'Saturday',
-              preferredTime: data.preferredTime || '06:00 PM',
-              currentElo: data.eloRating,
-            },
-          })
-
-          navigate(data.teamProfileCompleted ? '/team' : '/team/choice')
-          return
-        }
-
-        const memberResponse = await fetch(`${API_BASE}/team-joins/member/${encodeURIComponent(normalizedEmail)}`)
-        const memberData = await memberResponse.json()
-
-        if (memberResponse.ok && memberData?.team) {
-          setUser({
-            id: memberData.team._id,
-            uid: formatUid(memberData.team.uid),
-            name: memberData.memberName || 'Team Member',
-            email: memberData.memberEmail || normalizedEmail,
-            role: 'team',
-            teamAccess: 'basic',
-            isCaptain: false,
-            teamProfileCompleted: true,
-            eloRating: memberData.team.eloRating,
-            eloMatchesPlayed: memberData.team.eloMatchesPlayed || 0,
-            teamName: memberData.team.teamName || '',
-            teamInfo: {
-              name: memberData.team.teamName || '',
-              teamName: memberData.team.teamName || '',
-              location: memberData.team.location || '',
-              skill: memberData.team.skill || 'Intermediate',
-              lat: memberData.team.lat,
-              lng: memberData.team.lng,
-              preferredDay: memberData.team.preferredDay || 'Saturday',
-              preferredTime: memberData.team.preferredTime || '06:00 PM',
-              currentElo: memberData.team.eloRating,
-            },
-          })
-
-          navigate('/team')
-          return
-        }
-      } catch (_apiError) {
-        // Fall through to use mock data
-      }
-
-      // Use mock data fallback
-      const selectedTeam = teamOptions.find(team => team.email === normalizedEmail)
-      
-      if (!selectedTeam) {
-        setErr('Team account not found. Please select a team from the list.')
-        setLoading(false)
+      if (loggedInUser.role === 'owner') {
+        setUser({
+          id: loggedInUser._id,
+          name: loggedInUser.name,
+          email: loggedInUser.email,
+          role: 'owner',
+          profileCompleted: loggedInUser.profileCompleted || false,
+          ownerProfile: loggedInUser.ownerProfile || {
+            venueName: '',
+            location: '',
+            lat: null,
+            lng: null,
+            courts: 0,
+            phone: '',
+            hours: '',
+            locationVerified: false,
+          },
+          venueName: loggedInUser.ownerProfile?.venueName || '',
+        })
+        navigate('/owner')
         return
       }
 
       setUser({
-        id: selectedTeam.id,
-        uid: selectedTeam.uid,
-        name: selectedTeam.captainName,
-        email: selectedTeam.email,
+        id: loggedInUser._id,
+        uid: formatUid(data.team?.uid || loggedInUser.teamInfo?.teamId),
+        name: loggedInUser.name,
+        email: loggedInUser.email,
         role: 'team',
         teamAccess: 'full',
         isCaptain: true,
-        teamProfileCompleted: true,
-        eloRating: 1500,
-        eloMatchesPlayed: 0,
-        teamName: selectedTeam.label || '',
+        teamProfileCompleted: data.team?.teamProfileCompleted || false,
+        eloRating: data.team?.eloRating || 1000,
+        eloMatchesPlayed: data.team?.eloMatchesPlayed || 0,
+        teamName: data.team?.teamName || loggedInUser.teamInfo?.teamName || '',
         teamInfo: {
-          name: selectedTeam.label || '',
-          teamName: selectedTeam.label || '',
-          location: 'Kathmandu',
-          skill: 'Intermediate',
-          lat: 27.7172,
-          lng: 85.3240,
-          preferredDay: 'Saturday',
-          preferredTime: '06:00 PM',
-          currentElo: 1500,
+          name: data.team?.teamName || loggedInUser.teamInfo?.teamName || '',
+          teamName: data.team?.teamName || loggedInUser.teamInfo?.teamName || '',
+          location: data.team?.location || '',
+          skill: data.team?.skill || 'Intermediate',
+          lat: data.team?.lat,
+          lng: data.team?.lng,
+          preferredDay: data.team?.preferredDay || 'Saturday',
+          preferredTime: data.team?.preferredTime || '06:00 PM',
+          currentElo: data.team?.eloRating || 1000,
         },
       })
 
-      navigate('/team')
+      navigate(data.team?.teamProfileCompleted ? '/team' : '/team/choice')
     } catch (_error) {
       setErr('Unable to process login. Please try again.')
     } finally {

@@ -1,56 +1,61 @@
 import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../App.jsx'
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+import { fetchApiJson } from '../../utils/apiClient.js'
 
 export default function Register() {
-  const { setUser } = useAuth()
   const navigate    = useNavigate()
-  const [f, setF]   = useState({ name:'', email:'', role:'team' })
+  const [f, setF]   = useState({ name:'', email:'', role:'team', password:'', confirmPassword:'' })
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
 
   const submit = async e => {
     e.preventDefault(); setErr('')
     if (!f.name || !f.email) return setErr('Name and email are required.')
+    if (!f.password || !f.confirmPassword) return setErr('Password and confirm password are required.')
+    if (f.password !== f.confirmPassword) return setErr('Passwords do not match.')
+    if (f.password.length < 6) return setErr('Password must be at least 6 characters.')
 
     setLoading(true)
     try {
       if (f.role === 'team') {
-        const response = await fetch(`${API_BASE}/teams/register`, {
+        const { response, data } = await fetchApiJson('/teams/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ captainName: f.name, email: f.email }),
+          body: JSON.stringify({ captainName: f.name, email: f.email, password: f.password, confirmPassword: f.confirmPassword }),
         })
-
-        const data = await response.json()
         if (!response.ok) {
           setErr(data.message || 'Failed to create team account.')
           return
         }
         // Send OTP for email verification before finalizing login
-        try {
-          await fetch(`${API_BASE}/auth/send-otp`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: f.email }),
-          })
-        } catch (_e) {
+        fetchApiJson('/auth/send-otp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: f.email, name: f.name, role: 'team', password: f.password, confirmPassword: f.confirmPassword }),
+          timeoutMs: 5000,
+        }).catch(_e => {
           // ignore send failures; user can request resend on verify page
-        }
+        })
 
         // Redirect to verify page and pass created team in location state
-        navigate('/verify-email', { state: { email: f.email, team: data.team } })
+        navigate('/verify-email', { state: { email: f.email, role: 'team', team: data.team } })
         return
       }
 
-      setUser({
-        name: f.name,
-        email: f.email,
-        role: f.role,
+      const { response, data } = await fetchApiJson('/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: f.email, name: f.name, role: 'owner', password: f.password, confirmPassword: f.confirmPassword }),
+        timeoutMs: 5000,
       })
-      navigate('/owner')
+
+      if (!response.ok) {
+        setErr(data.message || 'Failed to create owner account.')
+        return
+      }
+
+      navigate('/verify-email', { state: { email: f.email, role: 'owner', owner: { name: f.name } } })
     } catch (_error) {
       setErr('Unable to connect to server. Please try again.')
     } finally {
@@ -84,6 +89,16 @@ export default function Register() {
             <label className="form-label">Email Address</label>
             <input type="email" className="form-control" placeholder="you@example.com"
               value={f.email} onChange={e => setF({...f, email:e.target.value})} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Password</label>
+            <input type="password" className="form-control" placeholder="Min 6 characters"
+              value={f.password} onChange={e => setF({...f, password:e.target.value})} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Confirm Password</label>
+            <input type="password" className="form-control" placeholder="Repeat password"
+              value={f.confirmPassword} onChange={e => setF({...f, confirmPassword:e.target.value})} />
           </div>
           <div className="form-group">
             <label className="form-label">I am a…</label>

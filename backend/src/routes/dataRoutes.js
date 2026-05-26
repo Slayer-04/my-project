@@ -584,6 +584,82 @@ router.get('/users/:id', async (req, res) => {
   }
 })
 
+router.get('/users/email/:email', async (req, res) => {
+  try {
+    const email = String(req.params.email || '').trim().toLowerCase()
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required.' })
+    }
+
+    const user = await User.findOne({ email }).select('-password')
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' })
+    }
+
+    return res.json(user)
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch user by email.', error: error.message })
+  }
+})
+
+router.patch('/users/:id/profile', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id)
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' })
+    }
+
+    if (user.role !== 'owner') {
+      return res.status(400).json({ message: 'Only owner profiles can be updated via this endpoint.' })
+    }
+
+    const ownerProfile = req.body?.ownerProfile || {}
+    const venueName = String(ownerProfile.venueName || '').trim()
+    const location = String(ownerProfile.location || '').trim()
+    const courtsRaw = ownerProfile.courts
+    const courts = Number(courtsRaw)
+    const phone = String(ownerProfile.phone || '').trim()
+    const hours = String(ownerProfile.hours || '').trim()
+    const lat = Number(ownerProfile.lat)
+    const lng = Number(ownerProfile.lng)
+
+    if (!venueName || !location) {
+      return res.status(400).json({ message: 'venueName and location are required.' })
+    }
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ message: 'Exact map coordinates (lat/lng) are required.' })
+    }
+
+    user.ownerProfile = {
+      venueName,
+      location,
+      lat,
+      lng,
+      courts: Number.isFinite(courts) && courts >= 0 ? courts : 0,
+      phone,
+      hours,
+      locationVerified: true,
+    }
+    user.profileCompleted = true
+    await user.save()
+
+    return res.json({
+      message: 'Owner profile updated.',
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        profileCompleted: user.profileCompleted,
+        ownerProfile: user.ownerProfile,
+      },
+    })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to update owner profile.', error: error.message })
+  }
+})
+
 /* ────────────────────────────────────────────────────────────────── */
 /* MATCH RESULTS ROUTES                                               */
 /* ────────────────────────────────────────────────────────────────── */

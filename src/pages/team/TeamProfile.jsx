@@ -3,16 +3,18 @@ import { useNavigate } from 'react-router-dom'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
 import { useAuth } from '../../App.jsx'
+import { getApiBaseUrl } from '../../utils/apiConfig.js'
 
 const LocationPicker = lazy(() => import('../../components/LocationPicker.jsx'))
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+const API_BASE = getApiBaseUrl()
 
 export default function TeamProfile() {
   const { user, setUser, matchResults } = useAuth()
   const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
   const [leavingTeam, setLeavingTeam] = useState(false)
+  const [teamRoster, setTeamRoster] = useState({ captainName: '', members: [] })
   const dayOptions = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
   const timeOptions = ['06:00 AM', '07:00 AM', '08:00 AM', '10:00 AM', '12:00 PM', '02:00 PM', '04:00 PM', '06:00 PM', '08:00 PM']
   const [info, setInfo] = useState(
@@ -39,6 +41,58 @@ export default function TeamProfile() {
   }
 
   const myTeamName = info.name || user?.teamInfo?.name || user?.teamName || 'My Team'
+  const captainName = teamRoster.captainName || user?.teamInfo?.captainName || user?.captainName || user?.name || 'Captain'
+  const memberCount = Math.max(1, 1 + teamRoster.members.length)
+  const formatUid = value => {
+    const digits = String(value || '').replace(/\D/g, '')
+    if (digits.length !== 8) return 'Pending'
+    return digits
+  }
+  const teamUid = formatUid(user?.uid)
+
+  useEffect(() => {
+    let active = true
+
+    const loadRoster = async () => {
+      if (!teamUid || teamUid === 'Pending') {
+        if (active) {
+          setTeamRoster({ captainName: user?.name || '', members: [] })
+        }
+        return
+      }
+
+      try {
+        const response = await fetch(`${API_BASE}/team-joins/team/${encodeURIComponent(teamUid)}`)
+        const data = await response.json()
+
+        if (!active || !response.ok || !Array.isArray(data)) return
+
+        const approvedMembers = data
+          .filter(request => request.status === 'approved')
+          .map(request => ({
+            name: request.requesterName,
+            email: request.requesterEmail,
+          }))
+
+        const captain = data.find(request => request.captainName)?.captainName || user?.name || ''
+
+        setTeamRoster({
+          captainName: captain,
+          members: approvedMembers,
+        })
+      } catch (_error) {
+        if (active) {
+          setTeamRoster({ captainName: user?.name || '', members: [] })
+        }
+      }
+    }
+
+    loadRoster()
+
+    return () => {
+      active = false
+    }
+  }, [teamUid, user?.name])
 
   const parseTimeToMinutes = (timeStr) => {
     if (!timeStr) return 0
@@ -99,12 +153,6 @@ export default function TeamProfile() {
   const baseElo = info.baseElo ?? skillBaseElo[info.skill] ?? 1200
   const fallbackElo = baseElo + (wins * 25) + (draws * 10) - (losses * 20)
   const currentElo = user?.eloRating ?? info.currentElo ?? fallbackElo
-  const formatUid = value => {
-    const digits = String(value || '').replace(/\D/g, '')
-    if (digits.length !== 8) return 'Pending'
-    return digits
-  }
-  const teamUid = formatUid(user?.uid)
 
   const handleLocationConfirm = (loc) => {
     setInfo({ ...info, location: loc.address, lat: loc.lat, lng: loc.lng })
@@ -317,7 +365,7 @@ export default function TeamProfile() {
                 <span className="ph-tag">{info.skill}</span>
                 <span className="ph-tag">Elo {currentElo}</span>
                 <span className="ph-tag">UID {teamUid}</span>
-                <span className="ph-tag">8 Members</span>
+                <span className="ph-tag">{memberCount} Members</span>
                 <span className="ph-tag">Est. 2023</span>
               </div>
             </div>
@@ -500,8 +548,8 @@ export default function TeamProfile() {
                       { lbl:'Skill',     val: info.skill,     icon:'fa-signal' },
                       { lbl:'Preferred Day',  val: info.preferredDay || 'Saturday', icon:'fa-calendar-day' },
                       { lbl:'Preferred Time', val: info.preferredTime || '06:00 PM', icon:'fa-clock' },
-                      { lbl:'Captain',   val: user?.name,     icon:'fa-user-tie' },
-                      { lbl:'Members',   val: '8 players',    icon:'fa-person-running' },
+                      { lbl:'Captain',   val: captainName,                 icon:'fa-user-tie' },
+                      { lbl:'Members',   val: `${memberCount} players`,   icon:'fa-person-running' },
                     ].map(item => (
                       <div key={item.lbl} style={{ display:'flex', justifyContent:'space-between', padding:'10px 0', borderBottom:'1px solid #f0f4f8' }}>
                         <span style={{ fontSize:12, color:'#8a96a8', display:'flex', alignItems:'center', gap:7, fontWeight:700, textTransform:'uppercase', letterSpacing:.3 }}>
