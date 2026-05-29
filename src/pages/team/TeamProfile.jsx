@@ -21,6 +21,7 @@ export default function TeamProfile() {
     user?.teamInfo || {
       name:'',
       location:'',
+      district:'',
       skill:'Intermediate',
       preferredDay:'Saturday',
       preferredTime:'06:00 PM',
@@ -155,7 +156,7 @@ export default function TeamProfile() {
   const currentElo = user?.eloRating ?? info.currentElo ?? fallbackElo
 
   const handleLocationConfirm = (loc) => {
-    setInfo({ ...info, location: loc.address, lat: loc.lat, lng: loc.lng })
+    setInfo({ ...info, location: loc.address, district: loc.district || '', lat: loc.lat, lng: loc.lng })
     setLocationVerified(true)
     setToast('✅ Location set from map!')
     setTimeout(() => setToast(''), 3000)
@@ -189,6 +190,7 @@ export default function TeamProfile() {
             body: JSON.stringify({
               teamName: info.name.trim(),
               location: info.location.trim(),
+              district: String(info.district || '').trim(),
               lat: info.lat,
               lng: info.lng,
               skill: info.skill,
@@ -213,6 +215,7 @@ export default function TeamProfile() {
               ...info,
               name: data.team.teamName || info.name.trim(),
               location: data.team.location || info.location.trim(),
+              district: data.team.district || data.team.location || info.location.trim(),
               skill: data.team.skill || info.skill,
               preferredDay: data.team.preferredDay || info.preferredDay,
               preferredTime: data.team.preferredTime || info.preferredTime,
@@ -229,6 +232,7 @@ export default function TeamProfile() {
             body: JSON.stringify({
               teamName: info.name.trim(),
               location: info.location.trim(),
+              district: String(info.district || '').trim(),
               lat: info.lat,
               lng: info.lng,
               preferredDay: info.preferredDay,
@@ -251,6 +255,7 @@ export default function TeamProfile() {
               ...info,
               name: data.team.teamName || info.name.trim(),
               location: data.team.location || info.location.trim(),
+              district: data.team.district || data.team.location || info.location.trim(),
               skill: data.team.skill || info.skill,
               preferredDay: data.team.preferredDay || info.preferredDay,
               preferredTime: data.team.preferredTime || info.preferredTime,
@@ -276,6 +281,7 @@ export default function TeamProfile() {
           ...info,
           name: info.name.trim(),
           location: info.location.trim(),
+          district: String(info.district || '').trim(),
           preferredDay: info.preferredDay,
           preferredTime: info.preferredTime,
           lat: info.lat,

@@ -9,6 +9,7 @@ const LocationPicker = lazy(() => import('../../components/LocationPicker.jsx'))
 export default function OwnerProfile() {
   const { user, setUser, bookings } = useAuth()
   const ownerProfile = user?.ownerProfile || {}
+  const timeOptions = ['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00']
 
   const [editing, setEditing] = useState(!user?.profileCompleted)
   const formatUid = value => {
@@ -20,22 +21,32 @@ export default function OwnerProfile() {
   const defaultInfo = useMemo(() => ({
     venueName: ownerProfile.venueName || user?.venueName || '',
     location: ownerProfile.location || '',
+    district: ownerProfile.district || '',
     lat: Number.isFinite(Number(ownerProfile.lat)) ? Number(ownerProfile.lat) : 27.7172,
     lng: Number.isFinite(Number(ownerProfile.lng)) ? Number(ownerProfile.lng) : 85.3240,
     locationVerified: Boolean(ownerProfile.locationVerified),
     courts: ownerProfile.courts ? String(ownerProfile.courts) : '',
     phone: ownerProfile.phone || '',
-    hours: ownerProfile.hours || '',
-  }), [ownerProfile.courts, ownerProfile.hours, ownerProfile.lat, ownerProfile.lng, ownerProfile.location, ownerProfile.locationVerified, ownerProfile.phone, ownerProfile.venueName, user?.venueName])
+    operatingOpen: ownerProfile.operatingHours?.open || ownerProfile.hours?.split?.('-')?.[0] || '06:00',
+    operatingClose: ownerProfile.operatingHours?.close || ownerProfile.hours?.split?.('-')?.[1] || '22:00',
+    weekdayPrice: ownerProfile.pricing?.weekdayDay ? String(ownerProfile.pricing.weekdayDay) : '1200',
+    eveningPrice: ownerProfile.pricing?.weekdayEvening ? String(ownerProfile.pricing.weekdayEvening) : '1500',
+    weekendPrice: ownerProfile.pricing?.weekend ? String(ownerProfile.pricing.weekend) : '1800',
+  }), [ownerProfile.courts, ownerProfile.district, ownerProfile.hours, ownerProfile.lat, ownerProfile.lng, ownerProfile.location, ownerProfile.locationVerified, ownerProfile.phone, ownerProfile.venueName, user?.venueName])
   const [info, setInfo] = useState({
     venueName: defaultInfo.venueName,
     location: defaultInfo.location,
+    district: defaultInfo.district,
     lat: defaultInfo.lat,
     lng: defaultInfo.lng,
     locationVerified: defaultInfo.locationVerified,
     courts: defaultInfo.courts,
     phone: defaultInfo.phone,
-    hours: defaultInfo.hours,
+    operatingOpen: defaultInfo.operatingOpen,
+    operatingClose: defaultInfo.operatingClose,
+    weekdayPrice: defaultInfo.weekdayPrice,
+    eveningPrice: defaultInfo.eveningPrice,
+    weekendPrice: defaultInfo.weekendPrice,
   })
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
@@ -68,12 +79,18 @@ export default function OwnerProfile() {
       const ownerPayload = {
         venueName,
         location,
+        district: String(info.district || '').trim(),
         lat: Number(info.lat),
         lng: Number(info.lng),
         locationVerified: true,
         courts: Number(info.courts) || 0,
         phone: String(info.phone || '').trim(),
-        hours: String(info.hours || '').trim(),
+        hours: `${String(info.operatingOpen || '06:00').trim()}-${String(info.operatingClose || '22:00').trim()}`,
+        operatingOpen: String(info.operatingOpen || '06:00').trim(),
+        operatingClose: String(info.operatingClose || '22:00').trim(),
+        weekdayPrice: Number(info.weekdayPrice) || 1200,
+        eveningPrice: Number(info.eveningPrice) || 1500,
+        weekendPrice: Number(info.weekendPrice) || 1800,
       }
 
       if (user?.id) {
@@ -94,6 +111,7 @@ export default function OwnerProfile() {
           profileCompleted: true,
           ownerProfile: data.user?.ownerProfile || ownerPayload,
           venueName: (data.user?.ownerProfile?.venueName || ownerPayload.venueName),
+          venueUid: data.venue?.uid || data.venue?._id || prev?.venueUid,
         }))
       } else {
         setUser(prev => ({
@@ -101,6 +119,7 @@ export default function OwnerProfile() {
           profileCompleted: true,
           ownerProfile: ownerPayload,
           venueName: ownerPayload.venueName,
+          venueUid: prev?.venueUid,
         }))
       }
 
@@ -134,7 +153,10 @@ export default function OwnerProfile() {
               <div className="ph-sub"><i className="fas fa-location-dot" style={{ marginRight:5 }} />{info.location || 'Set your venue location'}</div>
               <div className="ph-tags">
                 <span className="ph-tag">{info.courts || '0'} Courts</span>
-                <span className="ph-tag">{info.hours || 'Hours pending'}</span>
+                <span className="ph-tag">{`${info.operatingOpen || '06:00'} - ${info.operatingClose || '22:00'}`}</span>
+                <span className="ph-tag">Day Rs. {Number(info.weekdayPrice || 0).toLocaleString('en-IN')}</span>
+                <span className="ph-tag">Evening Rs. {Number(info.eveningPrice || 0).toLocaleString('en-IN')}</span>
+                <span className="ph-tag">Weekend Rs. {Number(info.weekendPrice || 0).toLocaleString('en-IN')}</span>
                 <span className="ph-tag">UID {venueUid}</span>
                 <span className="ph-tag">{Number(info.lat).toFixed(4)}, {Number(info.lng).toFixed(4)}</span>
                 <span className="ph-tag">{user?.profileCompleted ? 'Verified Partner' : 'Profile Incomplete'}</span>
@@ -162,7 +184,9 @@ export default function OwnerProfile() {
                       { lbl:'Venue Name',   key:'venueName', type:'text' },
                       { lbl:'Courts',       key:'courts',    type:'number' },
                       { lbl:'Phone',        key:'phone',     type:'text' },
-                      { lbl:'Operating Hours', key:'hours',  type:'text' },
+                      { lbl:'Day Price', key:'weekdayPrice', type:'number' },
+                      { lbl:'Evening Price', key:'eveningPrice', type:'number' },
+                      { lbl:'Weekend Price', key:'weekendPrice', type:'number' },
                     ].map(f => (
                       <div className="form-group" key={f.key}>
                         <label className="form-label">{f.lbl}</label>
@@ -173,6 +197,21 @@ export default function OwnerProfile() {
                         />
                       </div>
                     ))}
+
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                        <div className="form-group">
+                          <label className="form-label">Opens At</label>
+                          <select className="form-control" value={info.operatingOpen} onChange={e => setInfo({ ...info, operatingOpen: e.target.value })}>
+                            {timeOptions.map(time => <option key={`open-${time}`} value={time}>{time}</option>)}
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Closes At</label>
+                          <select className="form-control" value={info.operatingClose} onChange={e => setInfo({ ...info, operatingClose: e.target.value })}>
+                            {timeOptions.map(time => <option key={`close-${time}`} value={time}>{time}</option>)}
+                          </select>
+                        </div>
+                      </div>
 
                     <div className="form-group">
                       <label className="form-label">Location</label>
@@ -198,6 +237,11 @@ export default function OwnerProfile() {
                           ? `Location verified at (${Number(info.lat).toFixed(4)}, ${Number(info.lng).toFixed(4)})`
                           : 'Exact map point required for algorithm.'}
                       </div>
+                      {info.district && (
+                        <div style={{ fontSize:12, marginTop:4, color:'#4b5f7a' }}>
+                          District: {info.district}
+                        </div>
+                      )}
                     </div>
 
                     <button className="btn btn-primary btn-full" onClick={save}>
@@ -209,10 +253,14 @@ export default function OwnerProfile() {
                     {[
                       { lbl:'Venue Name',   val: info.venueName || '-',  icon:'fa-building' },
                       { lbl:'Location',     val: info.location || '-',   icon:'fa-location-dot' },
+                      { lbl:'District',     val: info.district || '-',   icon:'fa-map' },
                       { lbl:'Coordinates',  val: `${Number(info.lat).toFixed(4)}, ${Number(info.lng).toFixed(4)}`, icon:'fa-map-pin' },
                       { lbl:'Courts',       val: info.courts || '0',     icon:'fa-table-tennis-paddle-ball' },
                       { lbl:'Phone',        val: info.phone || '-',      icon:'fa-phone' },
-                      { lbl:'Hours',        val: info.hours || '-',      icon:'fa-clock' },
+                      { lbl:'Hours',        val: `${info.operatingOpen || '06:00'} - ${info.operatingClose || '22:00'}`, icon:'fa-clock' },
+                      { lbl:'Day Price',    val: `Rs. ${Number(info.weekdayPrice || 0).toLocaleString('en-IN')}`, icon:'fa-sun' },
+                      { lbl:'Evening Price', val: `Rs. ${Number(info.eveningPrice || 0).toLocaleString('en-IN')}`, icon:'fa-moon' },
+                      { lbl:'Weekend Price', val: `Rs. ${Number(info.weekendPrice || 0).toLocaleString('en-IN')}`, icon:'fa-calendar-week' },
                       { lbl:'Owner',        val: user?.name,      icon:'fa-user-tie' },
                     ].map(item => (
                       <div key={item.lbl} style={{ display:'flex', justifyContent:'space-between', padding:'10px 0', borderBottom:'1px solid #f0f4f8' }}>
@@ -278,6 +326,7 @@ export default function OwnerProfile() {
             onConfirm={loc => setInfo(prev => ({
               ...prev,
               location: loc.address,
+              district: loc.district || '',
               lat: loc.lat,
               lng: loc.lng,
               locationVerified: true,

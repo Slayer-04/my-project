@@ -282,7 +282,7 @@ export default function Bookings() {
       date: booking.date,
       time: booking.time,
       message: `${booking.team} requested ${booking.venue} on ${booking.date} at ${booking.time}`,
-      status: 'unread',
+      unread: true,
     }))
 
   const bdg = s => s==='confirmed'?'success': s==='pending'?'warning':'danger'

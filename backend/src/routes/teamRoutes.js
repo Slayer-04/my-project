@@ -7,7 +7,29 @@ const { rankTeamsByCompatibility } = require('../algorithms/compatibility')
 
 const router = express.Router()
 
-// Create a pending registration — the real Team record will be created after OTP verification
+const norm = value => (typeof value === 'string' ? value.trim() : '')
+
+const deriveDistrict = (location, district) => {
+  const explicitDistrict = norm(district)
+  if (explicitDistrict) return explicitDistrict
+
+  const normalizedLocation = norm(location)
+  if (!normalizedLocation) return ''
+
+  const parts = normalizedLocation.split(',').map(part => part.trim()).filter(Boolean)
+  if (parts.length === 0) return ''
+  return parts[parts.length - 1]
+}
+
+const serializeTeam = (team) => ({
+  ...team.toObject(),
+  teamName: norm(team.teamName) || norm(team.captainName),
+  location: norm(team.location),
+  district: deriveDistrict(team.location, team.district),
+})
+
+// Create team immediately so UID is available right after registration,
+// while still requiring OTP verification for login access.
 router.post('/register', async (req, res) => {
   try {
     const { captainName, email, password, confirmPassword } = req.body
@@ -30,24 +52,30 @@ router.post('/register', async (req, res) => {
 
     const normalizedEmail = email.trim().toLowerCase()
 
-    const existing = await Team.findOne({ email: normalizedEmail })
-    if (existing) {
-      return res.status(409).json({ message: 'Team account already exists for this email.' })
-    }
-
     const existingUser = await User.findOne({ email: normalizedEmail })
-    if (existingUser) {
-      return res.status(409).json({ message: existingUser.verified ? 'An account already exists for this email.' : 'This email is already pending verification.' })
+    if (existingUser?.verified) {
+      return res.status(409).json({ message: 'An account already exists for this email.' })
     }
 
-    const alreadyPending = await PendingRegistration.findOne({ email: normalizedEmail })
-    if (alreadyPending) {
-      return res.status(200).json({ message: 'Pending registration already created. Please verify your email.', pending: true })
+    let team = await Team.findOne({ email: normalizedEmail })
+    if (!team) {
+      team = await Team.create({
+        captainName: captainName.trim(),
+        email: normalizedEmail,
+        teamProfileCompleted: false,
+      })
     }
 
-    const pending = await PendingRegistration.create({ captainName: captainName.trim(), email: normalizedEmail, role: 'team' })
+    const alreadyPending = await PendingRegistration.findOne({ email: normalizedEmail, role: 'team' })
+    if (!alreadyPending) {
+      await PendingRegistration.create({ captainName: captainName.trim(), email: normalizedEmail, role: 'team' })
+    }
 
-    return res.status(201).json({ message: 'Pending registration created. Verify your email to complete registration.', pending: true })
+    return res.status(201).json({
+      message: 'Team account created. Verify your email to activate login.',
+      pending: true,
+      team: serializeTeam(team),
+    })
   } catch (error) {
     return res.status(500).json({ message: 'Failed to create pending registration.', error: error.message })
   }
@@ -65,7 +93,7 @@ router.get('/email/:email', async (req, res) => {
       return res.status(404).json({ message: 'Team not found for this email.' })
     }
 
-    return res.json(team)
+    return res.json(serializeTeam(team))
   } catch (error) {
     return res.status(500).json({ message: 'Failed to fetch team by email.', error: error.message })
   }
@@ -81,21 +109,24 @@ router.get('/', async (req, res) => {
     const limit = Number(req.query.limit)
     const random = String(req.query.random || '').toLowerCase() === 'true'
 
-    let teamsQuery
-
     if (random && Number.isFinite(limit) && limit > 0) {
       const pipeline = [{ $match: query }, { $sample: { size: limit } }]
       const allTeams = await Team.aggregate(pipeline)
-      return res.json(allTeams)
+      return res.json(allTeams.map(team => ({
+        ...team,
+        teamName: norm(team.teamName) || norm(team.captainName),
+        location: norm(team.location),
+        district: deriveDistrict(team.location, team.district),
+      })))
     }
 
-    teamsQuery = Team.find(query).sort({ createdAt: -1 })
+    let teamsQuery = Team.find(query).sort({ createdAt: -1 })
     if (Number.isFinite(limit) && limit > 0) {
       teamsQuery = teamsQuery.limit(limit)
     }
 
     const allTeams = await teamsQuery
-    return res.json(allTeams)
+    return res.json(allTeams.map(serializeTeam))
   } catch (error) {
     return res.status(500).json({ message: 'Failed to fetch teams.', error: error.message })
   }
@@ -143,7 +174,7 @@ router.get('/:id', async (req, res) => {
     if (!team) {
       return res.status(404).json({ message: 'Team not found.' })
     }
-    return res.json(team)
+    return res.json(serializeTeam(team))
   } catch (error) {
     return res.status(500).json({ message: 'Failed to fetch team.', error: error.message })
   }
@@ -151,7 +182,7 @@ router.get('/:id', async (req, res) => {
 
 router.patch('/:id/complete-profile', async (req, res) => {
   try {
-    const { teamName, location, skill, locationVerified, lat, lng, preferredDay, preferredTime } = req.body
+    const { teamName, location, district, skill, locationVerified, lat, lng, preferredDay, preferredTime } = req.body
 
     if (!teamName || !location || !skill) {
       return res.status(400).json({ message: 'teamName, location, and skill are required.' })
@@ -185,6 +216,7 @@ router.patch('/:id/complete-profile', async (req, res) => {
 
     team.teamName = teamName.trim()
     team.location = location.trim()
+    team.district = deriveDistrict(location, district)
     team.skill = skill
     team.preferredDay = preferredDay || ''
     team.preferredTime = preferredTime || ''
@@ -200,7 +232,7 @@ router.patch('/:id/complete-profile', async (req, res) => {
 
     return res.json({
       message: 'Team profile completed successfully.',
-      team,
+      team: serializeTeam(team),
     })
   } catch (error) {
     return res.status(500).json({ message: 'Failed to complete team profile.', error: error.message })
@@ -209,12 +241,11 @@ router.patch('/:id/complete-profile', async (req, res) => {
 
 router.patch('/:id', async (req, res) => {
   try {
-    const { teamName, location, skill, lat, lng, preferredDay, preferredTime } = req.body
+    const { teamName, location, district, skill, lat, lng, preferredDay, preferredTime } = req.body
     const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     if (typeof preferredDay !== 'undefined' && preferredDay && !allowedDays.includes(preferredDay)) {
       return res.status(400).json({ message: 'Invalid preferredDay value.' })
     }
-
 
     const team = await Team.findById(req.params.id)
     if (!team) {
@@ -240,6 +271,11 @@ router.patch('/:id', async (req, res) => {
         return res.status(400).json({ message: 'location cannot be empty.' })
       }
       team.location = normalizedLocation
+      team.district = deriveDistrict(normalizedLocation, district || team.district)
+    }
+
+    if (typeof district !== 'undefined' && typeof location === 'undefined') {
+      team.district = deriveDistrict(team.location, district)
     }
 
     if (typeof preferredDay !== 'undefined') {
@@ -268,7 +304,7 @@ router.patch('/:id', async (req, res) => {
 
     return res.json({
       message: 'Team updated successfully.',
-      team,
+      team: serializeTeam(team),
     })
   } catch (error) {
     return res.status(500).json({ message: 'Failed to update team.', error: error.message })

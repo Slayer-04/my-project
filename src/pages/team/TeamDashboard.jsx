@@ -4,14 +4,82 @@ import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
 import ScoreModal from '../../components/ScoreModal.jsx'
 import { useAuth } from '../../App.jsx'
+import { getApiBaseUrl } from '../../utils/apiConfig.js'
+
+const API_BASE = getApiBaseUrl()
+
+const mapBookingFromApi = booking => ({
+  ...booking,
+  id: booking.id || booking._id,
+  venue: booking.venueId?.name || booking.venue,
+})
 
 export default function TeamDashboard() {
   const { user, bookings, setBookings, matchResults, setMatchResults, matchPosts } = useAuth()
   const navigate = useNavigate()
   const [scoreModalOpen, setScoreModalOpen] = useState(false)
   const [selectedMatch, setSelectedMatch] = useState(null)
-  const myTeamName = user?.teamInfo?.name || user?.teamName || 'My Team'
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false)
+  const teamAliases = [
+    user?.teamInfo?.teamName,
+    user?.teamInfo?.name,
+    user?.teamName,
+    user?.teamInfo?.captainName,
+    user?.name,
+  ].map(value => String(value || '').trim()).filter(Boolean)
+  const myTeamName = teamAliases[0] || 'My Team'
   const isBasicTeamMember = user?.teamAccess === 'basic'
+
+  const matchesTeam = (booking) => {
+    const bookingTeam = String(booking?.team || '').trim()
+    const bookingOpponent = String(booking?.opponent || '').trim()
+    const bookingTeamEmail = String(booking?.teamEmail || '').trim().toLowerCase()
+    const userEmail = String(user?.email || '').trim().toLowerCase()
+
+    return teamAliases.some(alias => alias === bookingTeam || alias === bookingOpponent)
+      || (userEmail && bookingTeamEmail === userEmail)
+  }
+
+  useEffect(() => {
+    if (user?.role !== 'team' || !myTeamName) return
+
+    let active = true
+
+    const loadTeamBookings = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/bookings`)
+        if (!response.ok) return
+
+        const data = await response.json()
+        if (!active || !Array.isArray(data)) return
+
+        const mappedBookings = data.map(mapBookingFromApi).filter(matchesTeam)
+        setBookings(prev => {
+          const localOnly = prev.filter(booking => !matchesTeam(booking))
+          const merged = [...mappedBookings, ...prev.filter(matchesTeam)]
+          const uniqueById = [...new Map(merged.map(booking => [String(booking.id), booking])).values()]
+          return [...localOnly, ...uniqueById]
+        })
+      } catch (_error) {
+        // Keep local bookings if the server is unavailable.
+      }
+    }
+
+    loadTeamBookings()
+    const intervalId = setInterval(loadTeamBookings, 5000)
+
+    const handleFocus = () => {
+      loadTeamBookings()
+    }
+
+    window.addEventListener('focus', handleFocus)
+
+    return () => {
+      active = false
+      clearInterval(intervalId)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [myTeamName, setBookings, user?.role])
 
   useEffect(() => {
     if (!Array.isArray(matchPosts) || matchPosts.length === 0) return
@@ -45,7 +113,7 @@ export default function TeamDashboard() {
     }
   }, [bookings, matchPosts, setBookings])
 
-  const myBookings = bookings.filter(b => b.team === myTeamName)
+  const myBookings = bookings.filter(matchesTeam)
   
   // Helper: Parse time string (12-hour format) to minutes since midnight
   const parseTimeToMinutes = (timeStr) => {
@@ -98,11 +166,11 @@ export default function TeamDashboard() {
     today.setHours(0, 0, 0, 0)
     bDate.setHours(0, 0, 0, 0)
 
-    // Check if booking is today and time has passed (+ 2 hour buffer for match duration)
+    // Check if booking is today and time has passed (+ 1 hour buffer for match duration)
     if (bDate.getTime() === today.getTime()) {
       const currentMinutes = now.getHours() * 60 + now.getMinutes()
       const bookingMinutes = parseTimeToMinutes(bookingTime)
-      return currentMinutes > bookingMinutes + 120 // 2 hours after scheduled time
+      return currentMinutes > bookingMinutes + 60 // 1 hour after scheduled time
     }
 
     // If booking is in past date, it's finished
@@ -113,7 +181,7 @@ export default function TeamDashboard() {
 
   // Find finished matches that need score entry
   const finishedMatchesNeedingScores = myBookings.filter(b => {
-    if (b.status === 'cancelled' || !b.opponent) return false // Only matches with opponents
+    if (b.status !== 'confirmed' || !b.opponent) return false // Only confirmed matches with opponents
     if (!isMatchFinished(b.date, b.time)) return false // Only finished matches
     // Check if score already submitted
     const scoreExists = matchResults.find(r => r.bookingId === b.id && r.team === myTeamName)
@@ -173,12 +241,18 @@ export default function TeamDashboard() {
     })
     .sort((left, right) => right.sortValue - left.sortValue)
 
+  const hasMatchScore = (booking) => (
+    matchResults.some(result => result.bookingId === booking.id && result.team === myTeamName)
+  )
+
   const upcoming = myBookings
-    .filter(b => b.status !== 'cancelled' && isUpcoming(b.date, b.time))
+    .filter(b => b.status !== 'cancelled' && (!b.opponent || !hasMatchScore(b)))
     .sort((a, b) => bookingSortValue(a) - bookingSortValue(b))
-    .slice(0, 3)
+  const visibleUpcoming = showAllUpcoming ? upcoming : upcoming.slice(0, 3)
+  const upcomingCount = myBookings.filter(b => b.status !== 'cancelled' && (!b.opponent || !hasMatchScore(b))).length
   const activeBookingCount = myBookings.filter(b => b.status !== 'cancelled').length
   const recent = teamMatchHistory.slice(0, 3)
+  const seasonWins = teamMatchHistory.filter(match => match.result === 'win').length
 
   const resultColor = r => r==='win' ? '#00b96b' : r==='loss' ? '#e53e3e' : '#eab308'
 
@@ -194,12 +268,14 @@ export default function TeamDashboard() {
     return dayDiff > 2
   }
 
-  const unbook = (bookingId, venue, date, time) => {
+  const unbook = (bookingId, venue, date, time, challengeId) => {
     const confirmed = window.confirm(`Unbook ${venue} on ${date} at ${time}?`)
     if (!confirmed) return
 
     setBookings(prev => prev.map(booking => (
-      booking.id === bookingId ? { ...booking, status: 'cancelled' } : booking
+      challengeId
+        ? (booking.challengeId === challengeId ? { ...booking, status: 'cancelled' } : booking)
+        : (booking.id === bookingId ? { ...booking, status: 'cancelled' } : booking)
     )))
   }
 
@@ -222,9 +298,9 @@ export default function TeamDashboard() {
           <div className="stats-row anim-2">
             {[
               { icon:'fa-users',          cls:'si-green',  val:myTeamName,       lbl:'My Team',         sub:'8 members' },
-              { icon:'fa-calendar-check', cls:'si-blue',   val:'3',             lbl:'Upcoming Matches', sub:'Next: Tomorrow' },
+              { icon:'fa-calendar-check', cls:'si-blue',   val:String(upcomingCount), lbl:'Upcoming Matches', sub: upcomingCount > 0 ? 'Next: Soon' : 'No upcoming matches' },
               { icon:'fa-building',       cls:'si-orange', val:String(activeBookingCount), lbl:'Booked Futsals',  sub:'Your team only' },
-              { icon:'fa-trophy',         cls:'si-purple', val:'12',            lbl:'Season Wins',     sub:'+3 this month' },
+              { icon:'fa-trophy',         cls:'si-purple', val:String(seasonWins), lbl:'Season Wins',     sub: seasonWins > 0 ? 'From match history' : 'No wins yet' },
             ].map(s => (
               <div className="stat-card" key={s.lbl}>
                 <div className={`stat-icon ${s.cls}`}><i className={`fas ${s.icon}`} /></div>
@@ -242,20 +318,27 @@ export default function TeamDashboard() {
             <div className="card">
               <div className="card-hd">
                 <h3>Upcoming Bookings</h3>
-                {!isBasicTeamMember && (
-                  <button className="btn btn-outline btn-sm" onClick={() => navigate('/team/book-futsal')}>
-                    <i className="fas fa-plus" /> Book
-                  </button>
-                )}
+                <div style={{ display:'flex', gap:8 }}>
+                  {upcoming.length > 3 && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => setShowAllUpcoming(v => !v)}>
+                      <i className={`fas fa-${showAllUpcoming ? 'chevron-up' : 'ellipsis'}`} /> {showAllUpcoming ? 'Less' : 'More'}
+                    </button>
+                  )}
+                  {!isBasicTeamMember && (
+                    <button className="btn btn-outline btn-sm" onClick={() => navigate('/team/book-futsal')}>
+                      <i className="fas fa-plus" /> Book
+                    </button>
+                  )}
+                </div>
               </div>
               <div>
-                {upcoming.length === 0 ? (
+                {visibleUpcoming.length === 0 ? (
                   <div className="empty-state" style={{ padding:'26px 18px' }}>
                     <i className="fas fa-calendar-plus" />
                     <h3>No bookings yet</h3>
                     <p>Your upcoming bookings will appear here.</p>
                   </div>
-                ) : upcoming.map(b => (
+                ) : visibleUpcoming.map(b => (
                   <div key={b.id} style={{ padding:'13px 22px', borderBottom:'1px solid #f0f4f8', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                     <div>
                       {b.opponent ? (
@@ -285,7 +368,7 @@ export default function TeamDashboard() {
                       {canUnbook(b.date) && (
                         <button
                           className="btn btn-outline btn-sm"
-                          onClick={() => unbook(b.id, b.venue, b.date, b.time)}
+                          onClick={() => unbook(b.id, b.venue, b.date, b.time, b.challengeId)}
                         >
                           Unbook
                         </button>

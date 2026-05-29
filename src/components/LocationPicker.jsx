@@ -19,6 +19,7 @@ function ClickHandler({ onSelect }) {
 export default function LocationPicker({ initialLat = 27.7172, initialLng = 85.3240, onConfirm, onClose }) {
   const [position, setPosition] = useState(null)
   const [address,  setAddress]  = useState('')
+  const [district, setDistrict] = useState('')
   const [loading,  setLoading]  = useState(false)
 
   const handleSelect = async (latlng) => {
@@ -29,6 +30,15 @@ export default function LocationPicker({ initialLat = 27.7172, initialLng = 85.3
         `https://nominatim.openstreetmap.org/reverse?lat=${latlng.lat}&lon=${latlng.lng}&format=json`
       )
       const data = await res.json()
+      const resolvedDistrict =
+        data.address?.county ||
+        data.address?.state_district ||
+        data.address?.city_district ||
+        data.address?.municipality ||
+        data.address?.city ||
+        data.address?.town ||
+        data.address?.village ||
+        ''
       const place =
         data.address?.suburb        ||
         data.address?.neighbourhood ||
@@ -37,15 +47,17 @@ export default function LocationPicker({ initialLat = 27.7172, initialLng = 85.3
         data.address?.city          ||
         'Selected location'
       setAddress(place)
+      setDistrict(resolvedDistrict)
     } catch {
       setAddress('Selected location')
+      setDistrict('')
     }
     setLoading(false)
   }
 
   const confirm = () => {
     if (!position) return
-    onConfirm({ lat: position.lat, lng: position.lng, address })
+    onConfirm({ lat: position.lat, lng: position.lng, address, district })
     onClose()
   }
 
@@ -98,6 +110,11 @@ export default function LocationPicker({ initialLat = 27.7172, initialLng = 85.3
               <span>
                 <i className="fas fa-location-dot" style={{ color:'var(--green)', marginRight:6 }} />
                 <strong>{address}</strong>
+                {district && (
+                  <span style={{ fontSize:12, color:'#5f6f87', marginLeft:8 }}>
+                    District: {district}
+                  </span>
+                )}
                 <span style={{ fontSize:11, color:'#8a96a8', marginLeft:8 }}>
                   ({position.lat.toFixed(4)}, {position.lng.toFixed(4)})
                 </span>

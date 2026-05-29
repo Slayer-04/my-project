@@ -3,7 +3,9 @@ import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
 import { teams } from '../../data/mockData.js'
 import { useAuth } from '../../App.jsx'
-import { selectOptimalMatchLocation } from '../../utils/venueSelector.js'
+import { getApiBaseUrl } from '../../utils/apiConfig.js'
+
+const API_BASE = getApiBaseUrl()
 
 export default function Challenges() {
   const { user, challenges, setChallenges, setNotifications, bookings, setBookings } = useAuth()
@@ -12,12 +14,44 @@ export default function Challenges() {
   const [toast,  setToast]  = useState('')
   const [detail, setDetail] = useState(null)
   const [form,   setForm]   = useState({ team:'', date:'', time:'', venue:'Arena Futsal Park', note:'' })
-  const myTeamName = user?.teamInfo?.name || user?.teamInfo?.teamName || user?.teamName || 'My Team'
+  const myTeamName = user?.teamInfo?.name || user?.teamInfo?.teamName || user?.teamInfo?.captainName || user?.name || user?.teamName || 'My Team'
+  const canManageTeam = user?.teamAccess !== 'basic' && user?.isCaptain !== false
   const list = challenges
 
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
+  const resolveId = (value) => {
+    if (!value) return ''
+    if (typeof value === 'string' || typeof value === 'number') return String(value)
+    if (typeof value === 'object') return String(value._id || value.id || '')
+    return ''
+  }
+
+  const clearChallengeNotification = (challengeId) => {
+    setNotifications(prev => prev.filter(notification => resolveId(notification.challengeId) !== resolveId(challengeId)))
+  }
+
+  const patchChallengeStatus = async (challengeId, status) => {
+    if (!challengeId) return
+
+    const response = await fetch(`${API_BASE}/challenges/${challengeId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      throw new Error(errorData.message || 'Failed to update challenge.')
+    }
+  }
+
   const send = () => {
+    if (!canManageTeam) {
+      toast$('Only the captain can send challenges.')
+      return
+    }
+
     if (!form.team || !form.date || !form.time) return
     const challengeId = Date.now()
     setChallenges(prev => [{
@@ -42,26 +76,28 @@ export default function Challenges() {
     toast$(`🏆 Challenge sent to ${form.team}!`)
   }
 
-  const accept  = id => { 
+  const accept  = async id => { 
+    if (!canManageTeam) {
+      toast$('Only the captain can accept challenges.')
+      return
+    }
+
     const challenge = list.find(c => c.id === id)
     if (!challenge) return
     
-    const useExactSchedule = Boolean(challenge.exactSchedule)
-    const location = useExactSchedule
-      ? { venue: challenge.venue, time: challenge.time }
-      : selectOptimalMatchLocation(
-          challenge.from,
-          challenge.to,
-          challenge.date || new Date().toISOString().split('T')[0],
-          challenge.time,
-          bookings
-        )
-    
-    // Auto-selected booking date
     const bookingDate = challenge.date || new Date().toISOString().split('T')[0]
+    const bookingTime = challenge.time
+    const bookingVenue = challenge.venue
     
-    // Update challenge status with venue and time
-    setChallenges(l => l.map(c => c.id===id ? {...c, status:'accepted', venue: location.venue, time: location.time}  : c))
+    setChallenges(l => l.map(c => c.id===id ? {...c, status:'accepted', venue: bookingVenue, time: bookingTime}  : c))
+
+    try {
+      await patchChallengeStatus(resolveId(challenge.id), 'accepted')
+    } catch (_error) {
+      return
+    }
+
+    clearChallengeNotification(challenge.id)
     
     // Add bookings for BOTH teams so they both see it in upcoming bookings
     const baseBookingId = Date.now()
@@ -70,9 +106,9 @@ export default function Challenges() {
       {
         id: baseBookingId,
         team: myTeamName,
-        venue: location.venue,
+        venue: bookingVenue,
         date: bookingDate,
-        time: location.time,
+        time: bookingTime,
         status: 'confirmed',
         players: 11,
         amount: 'Rs. 1,200',
@@ -82,9 +118,9 @@ export default function Challenges() {
       {
         id: baseBookingId + 1,
         team: challenge.from,
-        venue: location.venue,
+        venue: bookingVenue,
         date: bookingDate,
-        time: location.time,
+        time: bookingTime,
         status: 'confirmed',
         players: 11,
         amount: 'Rs. 1,200',
@@ -94,12 +130,49 @@ export default function Challenges() {
     ])
     
     setDetail(null)
-    toast$(useExactSchedule
-      ? `✅ Challenge accepted with exact schedule: ${location.venue} at ${location.time}`
-      : `✅ Challenge accepted! Match at ${location.venue} at ${location.time}`)
+    toast$(`✅ Challenge accepted! Match at ${bookingVenue} at ${bookingTime}`)
   }
-  const decline = id => { setChallenges(l => l.map(c => c.id===id ? {...c,status:'declined'}  : c)); setDetail(null) }
-  const cancel  = id => { setChallenges(l => l.map(c => c.id===id ? {...c,status:'cancelled'} : c)); setDetail(null); toast$('Challenge cancelled.') }
+  const decline = async id => {
+    if (!canManageTeam) {
+      toast$('Only the captain can decline challenges.')
+      return
+    }
+
+    const challenge = list.find(c => c.id === id)
+    if (!challenge) return
+
+    setChallenges(l => l.map(c => c.id===id ? {...c,status:'declined'}  : c))
+
+    try {
+      await patchChallengeStatus(resolveId(challenge.id), 'declined')
+    } catch (_error) {
+      return
+    }
+
+    clearChallengeNotification(challenge.id)
+    setDetail(null)
+  }
+  const cancel  = async id => {
+    if (!canManageTeam) {
+      toast$('Only the captain can cancel challenges.')
+      return
+    }
+
+    const challenge = list.find(c => c.id === id)
+    if (!challenge) return
+
+    setChallenges(l => l.map(c => c.id===id ? {...c,status:'cancelled'} : c))
+
+    try {
+      await patchChallengeStatus(resolveId(challenge.id), 'cancelled')
+    } catch (_error) {
+      return
+    }
+
+    clearChallengeNotification(challenge.id)
+    setDetail(null)
+    toast$('Challenge cancelled.')
+  }
 
   const incoming  = list.filter(c => c.to   === myTeamName)
   const outgoing  = list.filter(c => c.from === myTeamName)

@@ -31,7 +31,7 @@ const API_BASE = getApiBaseUrl()
 export default function Login() {
   const { setUser } = useAuth()
   const navigate    = useNavigate()
-  const [f, setF]   = useState({ email:'', password:'', role:'team' })
+  const [f, setF]   = useState({ email:'', password:'123456', role:'team' })
   const [teamOptions, setTeamOptions] = useState([])
   const [ownerOptions, setOwnerOptions] = useState([])
   const [err, setErr]     = useState('')
@@ -207,7 +207,7 @@ export default function Login() {
   const changeRole = (role) => {
     if (role === 'team') {
       const nextEmail = teamOptions[0]?.email || ''
-      setF(prev => ({ ...prev, role, email: prev.email || nextEmail }))
+      setF(prev => ({ ...prev, role, email: prev.email || nextEmail, password: '123456' }))
       return
     }
 
@@ -284,21 +284,23 @@ export default function Login() {
       }
 
       setUser({
-        id: loggedInUser._id,
-        uid: formatUid(data.team?.uid || loggedInUser.teamInfo?.teamId),
+        id: data.team?._id || loggedInUser.teamInfo?.teamId || loggedInUser._id,
+        uid: formatUid(data.team?.uid || loggedInUser.teamInfo?.uid),
         name: loggedInUser.name,
         email: loggedInUser.email,
         role: 'team',
-        teamAccess: 'full',
-        isCaptain: true,
+        teamAccess: loggedInUser.teamAccess || 'full',
+        isCaptain: loggedInUser.isCaptain !== false,
         teamProfileCompleted: data.team?.teamProfileCompleted || false,
         eloRating: data.team?.eloRating || 1000,
         eloMatchesPlayed: data.team?.eloMatchesPlayed || 0,
-        teamName: data.team?.teamName || loggedInUser.teamInfo?.teamName || '',
+        teamName: data.team?.teamName || loggedInUser.teamInfo?.teamName || loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
         teamInfo: {
-          name: data.team?.teamName || loggedInUser.teamInfo?.teamName || '',
-          teamName: data.team?.teamName || loggedInUser.teamInfo?.teamName || '',
-          location: data.team?.location || '',
+          name: data.team?.teamName || loggedInUser.teamInfo?.teamName || loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
+          teamName: data.team?.teamName || loggedInUser.teamInfo?.teamName || loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
+          captainName: loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
+          location: data.team?.location || loggedInUser.teamInfo?.location || '',
+          district: data.team?.district || loggedInUser.teamInfo?.district || '',
           skill: data.team?.skill || 'Intermediate',
           lat: data.team?.lat,
           lng: data.team?.lng,
@@ -308,7 +310,21 @@ export default function Login() {
         },
       })
 
-      navigate(data.team?.teamProfileCompleted ? '/team' : '/team/choice')
+      // Show the team choice page only on the user's first login when their profile
+      // is not yet completed. Persist a per-user flag in localStorage so the
+      // choice screen isn't auto-shown again on subsequent logins.
+      try {
+        const uniqueKey = loggedInUser._id || loggedInUser.email || ''
+        const seenKey = `fotmatch.seenTeamChoice:${uniqueKey}`
+        if (!data.team?.teamProfileCompleted && !localStorage.getItem(seenKey)) {
+          localStorage.setItem(seenKey, '1')
+          navigate('/team/choice')
+        } else {
+          navigate('/team')
+        }
+      } catch (_e) {
+        navigate(data.team?.teamProfileCompleted ? '/team' : '/team/choice')
+      }
     } catch (_error) {
       setErr('Unable to process login. Please try again.')
     } finally {

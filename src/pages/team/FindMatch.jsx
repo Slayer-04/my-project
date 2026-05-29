@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
-import { teams as mockTeams, LOCATION_COORDS } from '../../data/mockData.js'
+import { teams as mockTeams, venues as mockVenues, LOCATION_COORDS } from '../../data/mockData.js'
 import { useAuth } from '../../App.jsx'
 import { emitChallengeCreate, onChallengeCreated } from '../../utils/socketService.js'
 import { getApiBaseUrl } from '../../utils/apiConfig.js'
@@ -12,15 +12,15 @@ const API_BASE = getApiBaseUrl()
 const SEED_POSTS = []
 const POST_COLORS = ['blue', 'teal', 'purple', 'green', 'orange']
 const POST_EMOJIS = ['⚽', '🔥', '🦁', '🦅', '🏆', '⚡', '🥅', '🛡️', '🚀', '🎯']
-const POST_TIMES = ['06:00 AM', '08:00 AM', '10:00 AM', '12:00 PM', '02:00 PM', '04:00 PM', '06:00 PM', '08:00 PM']
+const POST_TIMES = ['06:00 AM', '07:00 AM', '08:00 AM', '09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM', '05:00 PM', '06:00 PM', '07:00 PM', '08:00 PM']
 const POST_VENUES = ['Arena Futsal Park', 'Champions Court', 'Goal Zone Futsal', 'Patan Sports Hub']
 
 const SKILL_TO_ELO = { Beginner:1400, Intermediate:1600, Advanced:1800 }
 const SKILL_LEVEL = { Beginner: 1, Intermediate: 2, Advanced: 3 }
 const COMPATIBILITY_WEIGHTS = {
-  elo: 0.42,
-  distance: 0.28,
-  form: 0.2,
+  elo: 0.25,
+  distance: 0.5,
+  form: 0.15,
   extras: 0.1,
 }
 const HARD_FILTERS = {
@@ -240,6 +240,21 @@ const nextDateForPreferredDay = (dayLabel) => {
   return next.toISOString().split('T')[0]
 }
 
+const formatMonthDay = (dateValue) => {
+  if (!dateValue) return '-'
+  const date = new Date(dateValue)
+  if (Number.isNaN(date.getTime())) return String(dateValue)
+  return date.toLocaleDateString('en-US', { month:'short', day:'numeric' })
+}
+
+const venueDisplayLabel = (venue) => {
+  const name = String(venue?.name || '').trim()
+  const location = String(venue?.location || '').trim()
+  if (!name && !location) return ''
+  if (!location) return name
+  return `${name} - ${location}`
+}
+
 const selectSmartVenueByHaversine = (myTeam, allTeams, currentTeamName) => {
   const myCoords = resolveCoordinates(myTeam)
   if (!myCoords) return 'Arena Futsal Park'
@@ -336,6 +351,8 @@ export default function FindMatch() {
   const [postModal, setPostModal] = useState(false)
   const [reqModal,  setReqModal]  = useState(null)
   const [showAllPosts, setShowAllPosts] = useState(false)
+  const [venueOptions, setVenueOptions] = useState([])
+  const [showVenueSuggestions, setShowVenueSuggestions] = useState(false)
   const [form,      setForm]      = useState({
     date:'',
     time:'',
@@ -344,8 +361,9 @@ export default function FindMatch() {
     visibility:'24',
   })
 
-  const currentTeamName = user?.teamInfo?.name || user?.teamInfo?.teamName || user?.teamName || 'My Team'
+  const currentTeamName = user?.teamInfo?.name || user?.teamInfo?.teamName || user?.teamInfo?.captainName || user?.name || user?.teamName || 'My Team'
   const currentTeamId = user?.id || user?._id || null
+  const canManageTeam = user?.teamAccess !== 'basic' && user?.isCaptain !== false
 
   const myTeam = useMemo(() => ({
     name: currentTeamName,
@@ -367,21 +385,46 @@ export default function FindMatch() {
   const currentTeamLocation = myTeam.location
   const safeMatchPosts = Array.isArray(matchPosts) ? matchPosts : []
 
+  const venueCoordinateMap = useMemo(() => {
+    const map = new Map()
+    venueOptions.forEach(venue => {
+      if (typeof venue.lat === 'number' && typeof venue.lng === 'number') {
+        map.set(String(venue.label || '').toLowerCase(), { lat: venue.lat, lng: venue.lng })
+        map.set(String(venue.name || '').toLowerCase(), { lat: venue.lat, lng: venue.lng })
+      }
+    })
+    return map
+  }, [venueOptions])
+
+  const resolveVenueCoords = (venueLabel) => {
+    const raw = String(venueLabel || '').trim()
+    if (!raw) return null
+
+    const lower = raw.toLowerCase()
+    if (venueCoordinateMap.has(lower)) {
+      return venueCoordinateMap.get(lower)
+    }
+
+    if (LOCATION_COORDS[raw]) {
+      return LOCATION_COORDS[raw]
+    }
+
+    const venueName = raw.includes(' - ') ? raw.split(' - ')[0].trim() : raw
+    if (venueCoordinateMap.has(venueName.toLowerCase())) {
+      return venueCoordinateMap.get(venueName.toLowerCase())
+    }
+
+    return LOCATION_COORDS[venueName] || null
+  }
+
   const getTeamElo = (team) => team.elo ?? SKILL_TO_ELO[team.skill] ?? 1600
 
   const getTeamDistanceMetrics = (team) => {
+    const postedVenueCoords = resolveVenueCoords(team.postedVenue || team.venue)
+    const venueDistanceKm = postedVenueCoords ? getDistanceKm(myTeam, postedVenueCoords) : null
     const betweenTeamsKm = getDistanceKm(myTeam, team)
-    const venueDistanceKm = getVenueDistanceKm(team, preferredContext.venue)
+    const fallbackDistance = venueDistanceKm ?? betweenTeamsKm ?? 8
 
-    if (betweenTeamsKm !== null && venueDistanceKm !== null) {
-      return {
-        scoreDistanceKm: (betweenTeamsKm * 0.65) + (venueDistanceKm * 0.35),
-        betweenTeamsKm,
-        venueDistanceKm,
-      }
-    }
-
-    const fallbackDistance = betweenTeamsKm ?? venueDistanceKm ?? 8
     return {
       scoreDistanceKm: fallbackDistance,
       betweenTeamsKm,
@@ -406,7 +449,7 @@ export default function FindMatch() {
     const opponentStrength = getTeamStrength(candidate)
     const myStrength = getTeamStrength(myTeam)
     const distance = getTeamDistanceMetrics(candidate)
-    const distanceKm = distance.betweenTeamsKm ?? distance.scoreDistanceKm
+    const distanceKm = distance.venueDistanceKm ?? distance.scoreDistanceKm
     const eloDiff = Math.abs(elo - myStrength.elo)
 
     if (eloDiff > HARD_FILTERS.maxEloDiff) {
@@ -422,9 +465,9 @@ export default function FindMatch() {
     const skillScore = getSkillScore(myTeam.skill, candidate.skill)
     const profileConfidence = getProfileConfidence(candidate)
     const proposedDay = availability.availability.day || preferredContext.day
-    const proposedTime = (availability.availability.slots && availability.availability.slots[0]) || preferredContext.time
-    const proposedVenue = (availability.availability.venues && availability.availability.venues[0]) || preferredContext.venue
-    const proposedDate = nextDateForPreferredDay(proposedDay)
+    const proposedTime = candidate.postedTime || (availability.availability.slots && availability.availability.slots[0]) || preferredContext.time
+    const proposedVenue = candidate.postedVenue || (availability.availability.venues && availability.availability.venues[0]) || preferredContext.venue
+    const proposedDate = candidate.postedDate || nextDateForPreferredDay(proposedDay)
 
     const eloScore = clamp(1 - (eloDiff / 450), 0, 1)
     const distanceScore = clamp(1 - (distanceKm / 18), 0, 1)
@@ -438,10 +481,11 @@ export default function FindMatch() {
     ))
     const tier = score >= 80 ? 'Excellent Fit' : score >= 65 ? 'Strong Fit' : score >= 50 ? 'Possible Fit' : 'Low Fit'
     const tierType = score >= 80 ? 'success' : score >= 65 ? 'info' : score >= 50 ? 'warning' : 'muted'
-    const distanceDisplay = distance.betweenTeamsKm !== null ? distance.betweenTeamsKm.toFixed(2) : '?'
+    const distanceDisplay = distance.venueDistanceKm !== null ? distance.venueDistanceKm.toFixed(2) : '?'
     const reasons = [
       `ELO gap ${eloDiff} with ${elo}`,
-      `${distanceDisplay}km from your team location`,
+      `${distanceDisplay}km from your team to posted futsal`,
+      `Posted futsal: ${proposedVenue}`,
       formFit.challengeBias > 0 ? 'You can stretch to a stronger opponent' : formFit.challengeBias < 0 ? 'Better for a softer opponent while form recovers' : 'Form is balanced',
       availability.sameDay ? `Both free on ${preferredContext.day}` : `Closest availability: ${availability.availability.day}`,
       availability.venueOverlap ? `Venue match at ${preferredContext.venue}` : `Next best venue: ${availability.availability.venues[0]}`,
@@ -496,6 +540,55 @@ export default function FindMatch() {
     }
   }, [setMatchPosts])
 
+  useEffect(() => {
+    let active = true
+
+    const fallbackVenues = (Array.isArray(mockVenues) ? mockVenues : []).map((venue, index) => ({
+      id: venue._id || venue.id || `mock-venue-${index + 1}`,
+      name: String(venue.name || '').trim(),
+      location: String(venue.location || '').trim(),
+      label: venueDisplayLabel(venue),
+      lat: typeof venue.lat === 'number' ? venue.lat : LOCATION_COORDS[venue.name]?.lat,
+      lng: typeof venue.lng === 'number' ? venue.lng : LOCATION_COORDS[venue.name]?.lng,
+    })).filter(venue => venue.name && venue.label)
+
+    const loadVenues = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/venues`)
+        const data = await response.json()
+
+        if (!response.ok || !Array.isArray(data)) {
+          throw new Error('Failed to load venues')
+        }
+
+        const mapped = data
+          .map((venue, index) => ({
+            id: venue._id || venue.id || `venue-${index + 1}`,
+            name: String(venue.name || '').trim(),
+            location: String(venue.location || '').trim(),
+            label: venueDisplayLabel(venue),
+            lat: typeof venue.lat === 'number' ? venue.lat : null,
+            lng: typeof venue.lng === 'number' ? venue.lng : null,
+          }))
+          .filter(venue => venue.name && venue.label)
+
+        const uniqueByLabel = [...new Map(mapped.map(venue => [venue.label.toLowerCase(), venue])).values()]
+
+        if (!active) return
+        setVenueOptions(uniqueByLabel.length > 0 ? uniqueByLabel : fallbackVenues)
+      } catch (_error) {
+        if (!active) return
+        setVenueOptions(fallbackVenues)
+      }
+    }
+
+    loadVenues()
+
+    return () => {
+      active = false
+    }
+  }, [])
+
   // Listen for challenge creations from other teams
   useEffect(() => {
     const unsubscribe = onChallengeCreated((challengeData) => {
@@ -534,9 +627,45 @@ export default function FindMatch() {
     }
   }, [currentTeamName, setChallenges, setNotifications])
 
+  const postedRecommendationCandidates = useMemo(() => {
+    const profileByTeamName = new Map(teams.map(team => [team.name, team]))
+    const seenTeams = new Set()
+
+    return safeMatchPosts
+      .filter(post => post && post.team && post.team !== myTeam.name && post.venue)
+      .filter(post => {
+        const key = String(post.team)
+        if (seenTeams.has(key)) return false
+        seenTeams.add(key)
+        return true
+      })
+      .map((post, index) => {
+        const profile = profileByTeamName.get(post.team) || {}
+        return {
+          id: `posted-${post.id || index + 1}`,
+          name: post.team,
+          skill: profile.skill || 'Intermediate',
+          location: profile.location || post.location || 'Kathmandu',
+          lat: typeof profile.lat === 'number' ? profile.lat : null,
+          lng: typeof profile.lng === 'number' ? profile.lng : null,
+          players: profile.players || post.players || 8,
+          wins: profile.wins || 0,
+          losses: profile.losses || 0,
+          streak: profile.streak || 0,
+          elo: profile.elo || post.elo || 1600,
+          color: profile.color || post.color || POST_COLORS[index % POST_COLORS.length],
+          emoji: profile.emoji || post.emoji || POST_EMOJIS[index % POST_EMOJIS.length],
+          profileCompleted: typeof profile.profileCompleted === 'boolean' ? profile.profileCompleted : true,
+          locationVerified: typeof profile.locationVerified === 'boolean' ? profile.locationVerified : true,
+          postedVenue: post.venue,
+          postedTime: post.time || '',
+          postedDate: post.date || '',
+        }
+      })
+  }, [safeMatchPosts, teams, myTeam.name])
+
   const recommendationData = useMemo(() => {
-    const scored = teams
-      .filter(t => t.id !== currentTeamId && t.name !== currentTeamName)
+    const scored = postedRecommendationCandidates
       .map(scoreCandidate)
       .filter(Boolean)
       .sort((a, b) => b.score - a.score)
@@ -547,7 +676,7 @@ export default function FindMatch() {
       hasFallback: scored.length < 5,
       context: preferredContext,
     }
-  }, [currentTeamId, currentTeamName, preferredContext, teams, myTeam.lat, myTeam.lng, myTeam.name, myTeam.skill, myTeam.streak, myTeam.elo, myTeam.wins, myTeam.losses])
+  }, [postedRecommendationCandidates, preferredContext, myTeam.lat, myTeam.lng, myTeam.name, myTeam.skill, myTeam.streak, myTeam.elo, myTeam.wins, myTeam.losses])
 
   const reqModalFit = useMemo(() => {
     if (!reqModal) return null
@@ -567,13 +696,6 @@ export default function FindMatch() {
 
   const toast$ = (msg, type='success') => { setToast({ msg, type }); setTimeout(() => setToast({ msg:'', type:'success' }), 3500) }
 
-  const autoPostPreview = useMemo(() => {
-    const date = form.date || nextDateForPreferredDay(myTeam.defaultDay)
-    const time = form.time || myTeam.defaultTime
-    const venue = form.venue || selectSmartVenueByHaversine(myTeam, teams, currentTeamName)
-    return { date, time, venue }
-  }, [form.date, form.time, form.venue, myTeam.defaultDay, myTeam.defaultTime, myTeam, teams, currentTeamName])
-
   const visiblePosts = useMemo(() => {
     return safeMatchPosts
       .map(post => ({
@@ -590,17 +712,21 @@ export default function FindMatch() {
   }, [showAllPosts, visiblePosts])
 
   const submitPost = () => {
-    // Exact fields are respected as-is; only blank fields are auto-filled.
-    const resolvedDate = form.date || autoPostPreview.date
-    const resolvedTime = form.time || autoPostPreview.time
-    const resolvedVenue = form.venue || autoPostPreview.venue
-    const usedAutoFill = !form.date || !form.time || !form.venue
+    if (!canManageTeam) {
+      toast$('Only the captain can post matches.', 'info')
+      return
+    }
+
+    if (!form.date || !form.time || !String(form.venue || '').trim()) {
+      toast$('Please select date, time, and venue.', 'info')
+      return
+    }
 
     const newPost = {
       id: Date.now(),
       team: myTeam.name, emoji: '🦅', elo: 1600,
-      location: myTeam.location, date: resolvedDate, time: resolvedTime,
-      venue: resolvedVenue, players: 8, note: form.note || 'Open for any match!',
+      location: myTeam.location, date: form.date, time: form.time,
+      venue: form.venue, players: 8, note: form.note || 'Open for any match!',
       color: 'green', requestedBy: null, visibility: form.visibility,
     }
     setMatchPosts(prev => [newPost, ...prev])
@@ -612,10 +738,7 @@ export default function FindMatch() {
       note:'',
       visibility:'24',
     })
-    toast$(usedAutoFill
-      ? '📣 Match post is live. Missing fields were auto-selected for you.'
-      : '📣 Your match post is live! Teams can now request you.'
-    )
+    toast$('📣 Your match post is live! Teams can now request you.')
   }
 
   const validateCompatibility = (opponent) => {
@@ -647,6 +770,11 @@ export default function FindMatch() {
   }
 
   const acceptRequest = (post) => {
+    if (!canManageTeam) {
+      toast$('Only the captain can accept match requests.', 'info')
+      return
+    }
+
     if (!post?.requestedBy) return
 
     setMatchPosts(prev => prev.map(p => p.id===post.id ? {...p, requestedBy: null, accepted: true} : p))
@@ -729,6 +857,11 @@ export default function FindMatch() {
   }
 
   const sendRequest = async (post) => {
+    if (!canManageTeam) {
+      toast$('Only the captain can send match requests.', 'info')
+      return
+    }
+
     const validation = validateCompatibility(post)
     if (!validation.allow) {
       setReqModal(null)
@@ -799,16 +932,6 @@ export default function FindMatch() {
         emitChallengeCreate(newChallenge)
       }
 
-      setNotifications(prev => [{
-        id: Date.now(),
-        challengeId,
-        type: 'challenge-request',
-        text: `${myTeam.name} requested a match with you.`,
-        time: 'just now',
-        unread: true,
-        team: post.team,
-        createdAt: new Date().toISOString(),
-      }, ...prev])
     }
 
     setReqModal(null)
@@ -821,6 +944,11 @@ export default function FindMatch() {
   }
 
   const hitTeam = async team => {
+    if (!canManageTeam) {
+      toast$('Only the captain can send match requests.', 'info')
+      return
+    }
+
     const challengeId = Date.now()
     const newChallenge = {
       id: challengeId,
@@ -868,17 +996,6 @@ export default function FindMatch() {
       setChallenges(prev => [newChallenge, ...prev])
       emitChallengeCreate(newChallenge)
     }
-
-    setNotifications(prev => [{
-      id: Date.now(),
-      challengeId,
-      type: 'challenge-request',
-      text: `${myTeam.name} sent you a manual challenge request.`,
-      time: 'just now',
-      unread: true,
-      team: team.name,
-      createdAt: new Date().toISOString(),
-    }, ...prev])
 
     toast$(`⚡ Request sent to ${team.name}. They will see it in Challenges and Notifications.`, 'success')
   }
@@ -945,7 +1062,7 @@ export default function FindMatch() {
                           <span className={`badge badge-${team.tierType}`}>{team.tier}</span>
                         </div>
                         <div style={{ display:'flex', flexWrap:'wrap', gap:10, marginBottom:10, fontSize:12, color:'#4a5568' }}>
-                          <span><i className="fas fa-calendar" style={{ color:'var(--orange)', marginRight:4 }} />{team.proposedDate || toIsoDate(1)}</span>
+                          <span><i className="fas fa-calendar" style={{ color:'var(--orange)', marginRight:4 }} />{formatMonthDay(team.proposedDate || toIsoDate(1))}</span>
                           <span><i className="fas fa-clock" style={{ color:'var(--purple)', marginRight:4 }} />{team.proposedTime || myTeam.defaultTime}</span>
                         </div>
                         <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:14 }}>
@@ -992,7 +1109,7 @@ export default function FindMatch() {
                         <span className={`badge badge-${team.tierType}`}>{team.tier}</span>
                       </div>
                       <div style={{ display:'flex', flexWrap:'wrap', gap:10, marginBottom:10, fontSize:12, color:'#4a5568' }}>
-                        <span><i className="fas fa-calendar" style={{ color:'var(--orange)', marginRight:4 }} />{team.proposedDate || toIsoDate(1)}</span>
+                        <span><i className="fas fa-calendar" style={{ color:'var(--orange)', marginRight:4 }} />{formatMonthDay(team.proposedDate || toIsoDate(1))}</span>
                         <span><i className="fas fa-clock" style={{ color:'var(--purple)', marginRight:4 }} />{team.proposedTime || myTeam.defaultTime}</span>
                       </div>
                       <button className="btn btn-outline btn-full" onClick={() => hitTeam(team)}>
@@ -1041,7 +1158,7 @@ export default function FindMatch() {
                           <div style={{ display:'flex', flexWrap:'wrap', gap:16, fontSize:13, color:'#4a5568', marginBottom:8 }}>
                             <span><i className="fas fa-location-dot" style={{ color:'var(--green)', marginRight:4 }} />{post.location}</span>
                             <span><i className="fas fa-building" style={{ color:'var(--blue)', marginRight:4 }} />{post.venue}</span>
-                            <span><i className="fas fa-calendar" style={{ color:'var(--orange)', marginRight:4 }} />{post.date}</span>
+                            <span><i className="fas fa-calendar" style={{ color:'var(--orange)', marginRight:4 }} />{formatMonthDay(post.date)}</span>
                             <span><i className="fas fa-clock" style={{ color:'var(--purple)', marginRight:4 }} />{post.time}</span>
                             <span><i className="fas fa-users" style={{ color:'var(--txt-3)', marginRight:4 }} />{post.players} players</span>
                           </div>
@@ -1115,17 +1232,17 @@ export default function FindMatch() {
               <button className="modal-close" onClick={() => setPostModal(false)}><i className="fas fa-xmark" /></button>
             </div>
             <p style={{ fontSize:13, color:'#8a96a8', marginBottom:18 }}>
-              Enter exact date, time, and venue if you want strict scheduling. Leave any field blank only if you want auto-fill for that field.
+              Select exact date, time, and venue for your post.
             </p>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
               <div className="form-group">
-                <label className="form-label">Exact Date (optional)</label>
+                <label className="form-label">Exact Date</label>
                 <input type="date" className="form-control" value={form.date} onChange={e => setForm({...form,date:e.target.value})} />
               </div>
               <div className="form-group">
-                <label className="form-label">Exact Time (optional)</label>
+                <label className="form-label">Exact Time</label>
                 <select className="form-control" value={form.time} onChange={e => setForm({...form,time:e.target.value})}>
-                  <option value="">Auto choose time (profile default)</option>
+                  <option value="">Select time</option>
                   {POST_TIMES.map(timeOption => <option key={timeOption} value={timeOption}>{timeOption}</option>)}
                 </select>
               </div>
@@ -1142,19 +1259,46 @@ export default function FindMatch() {
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label">Exact Venue (optional)</label>
-                <select className="form-control" value={form.venue} onChange={e => setForm({...form,venue:e.target.value})}>
-                  <option value="">Auto choose venue</option>
-                  <option>Arena Futsal Park</option>
-                  <option>Champions Court</option>
-                  <option>Goal Zone Futsal</option>
-                  <option>Patan Sports Hub</option>
-                </select>
+                <label className="form-label">Exact Venue</label>
+                <div style={{ position:'relative' }}>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={form.venue}
+                    placeholder="Type venue name or location"
+                    onFocus={() => setShowVenueSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowVenueSuggestions(false), 120)}
+                    onChange={e => {
+                      setForm({ ...form, venue: e.target.value })
+                      setShowVenueSuggestions(true)
+                    }}
+                  />
+                  {showVenueSuggestions && (
+                    <div style={{ position:'absolute', left:0, right:0, top:'calc(100% + 6px)', maxHeight:210, overflowY:'auto', background:'#fff', border:'1px solid var(--border)', borderRadius:10, zIndex:20, boxShadow:'0 10px 24px rgba(0,0,0,.12)' }}>
+                      {venueOptions
+                        .filter(venue => {
+                          const query = String(form.venue || '').trim().toLowerCase()
+                          if (!query) return true
+                          return venue.label.toLowerCase().includes(query) || venue.name.toLowerCase().includes(query) || venue.location.toLowerCase().includes(query)
+                        })
+                        .slice(0, 12)
+                        .map(venue => (
+                          <button
+                            key={venue.id}
+                            type="button"
+                            onMouseDown={() => {
+                              setForm({ ...form, venue: venue.label })
+                              setShowVenueSuggestions(false)
+                            }}
+                            style={{ width:'100%', textAlign:'left', padding:'10px 12px', border:'none', background:'#fff', cursor:'pointer', fontSize:13 }}
+                          >
+                            {venue.label}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-
-            <div style={{ fontSize:12, color:'#4a5568', background:'#f8fafc', border:'1px solid #e4e8ee', padding:'10px 12px', borderRadius:8, marginBottom:10 }}>
-              <strong>Auto-fill preview for blank fields only:</strong> {autoPostPreview.date} at {autoPostPreview.time} • {autoPostPreview.venue}
             </div>
 
             <div className="form-group">
@@ -1163,7 +1307,7 @@ export default function FindMatch() {
                 value={form.note} onChange={e => setForm({...form,note:e.target.value})} />
             </div>
             <div style={{ display:'flex', gap:10, marginTop:8 }}>
-              <button className="btn btn-primary" style={{ flex:1 }} onClick={submitPost}>
+              <button className="btn btn-primary" style={{ flex:1 }} onClick={submitPost} disabled={!form.date || !form.time || !form.venue}>
                 <i className="fas fa-bullhorn" /> Post Match
               </button>
               <button className="btn btn-outline" onClick={() => setPostModal(false)}>Cancel</button>
@@ -1191,7 +1335,7 @@ export default function FindMatch() {
                 </div>
               )}
               {[
-                { icon:'fa-calendar', val: reqModal.date },
+                { icon:'fa-calendar', val: formatMonthDay(reqModal.date) },
                 { icon:'fa-clock',    val: reqModal.time },
                 { icon:'fa-building', val: reqModal.venue },
                 { icon:'fa-star',   val: `ELO: ${reqModal.elo}` },

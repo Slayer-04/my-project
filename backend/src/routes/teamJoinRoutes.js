@@ -202,6 +202,8 @@ router.patch('/leave', async (req, res) => {
       const user = await User.findOne({ email: approvedRequest.requesterEmail.toLowerCase() })
       if (user) {
         user.teamInfo = { teamId: null, teamName: '', captainName: '' }
+        user.teamAccess = 'basic'
+        user.isCaptain = false
         await user.save()
       }
     } catch (_e) {
@@ -256,6 +258,8 @@ router.patch('/:id/approve', async (req, res) => {
           teamName: request.teamName || request.teamUid || '',
           captainName: request.captainName || '',
         }
+        user.teamAccess = 'basic'
+        user.isCaptain = false
         await user.save()
       }
     } catch (_e) {

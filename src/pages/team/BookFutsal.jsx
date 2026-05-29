@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
-import { venues } from '../../data/mockData.js'
+import { venues as mockVenues } from '../../data/mockData.js'
 import { useAuth } from '../../App.jsx'
 import { emitBookingCreate } from '../../utils/socketService.js'
 import { getApiBaseUrl } from '../../utils/apiConfig.js'
@@ -14,18 +14,130 @@ const mapBookingFromApi = booking => ({
   venue: booking.venueId?.name || booking.venue,
 })
 
+const parseTimeToMinutes = (timeValue) => {
+  if (!timeValue) return null
+  const text = String(timeValue).trim()
+  const is12Hour = /\b(AM|PM)\b/i.test(text)
+
+  if (is12Hour) {
+    const [timePart, meridiemRaw] = text.split(' ')
+    if (!timePart || !meridiemRaw) return null
+
+    const [hourRaw, minuteRaw] = timePart.split(':')
+    let hour = Number(hourRaw)
+    const minute = Number(minuteRaw)
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+
+    const meridiem = meridiemRaw.toUpperCase()
+    if (meridiem === 'PM' && hour !== 12) hour += 12
+    if (meridiem === 'AM' && hour === 12) hour = 0
+    return (hour * 60) + minute
+  }
+
+  const [hourRaw, minuteRaw] = text.split(':')
+  const hour = Number(hourRaw)
+  const minute = Number(minuteRaw)
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+  return (hour * 60) + minute
+}
+
+const minutesToTimeLabel = (minutes) => {
+  const normalized = Math.max(0, minutes)
+  const hour24 = Math.floor(normalized / 60)
+  const minute = normalized % 60
+  const suffix = hour24 >= 12 ? 'PM' : 'AM'
+  const displayHour = hour24 % 12 === 0 ? 12 : hour24 % 12
+  return `${String(displayHour).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${suffix}`
+}
+
+const toRupees = (value) => `Rs. ${Number(value || 0).toLocaleString('en-IN')}`
+
+const getVenuePricing = (venue) => venue?.pricing || {
+  weekdayDay: Number(venue?.pricePerHour) || 1200,
+  weekdayEvening: Number(venue?.pricePerHour) || 1200,
+  weekend: Number(venue?.pricePerHour) || 1200,
+  eveningStart: '18:00',
+}
+
+const getVenueOperatingHours = (venue) => venue?.operatingHours || { open: '06:00', close: '22:00' }
+
+const resolveBookingAmount = (venue, bookingDate, slot) => {
+  const pricing = getVenuePricing(venue)
+  const date = new Date(`${bookingDate}T00:00:00`)
+  const isWeekend = !Number.isNaN(date.getTime()) && [0, 6].includes(date.getDay())
+  const slotMinutes = parseTimeToMinutes(slot)
+  const eveningStartMinutes = parseTimeToMinutes(pricing.eveningStart || '18:00') ?? (18 * 60)
+
+  if (isWeekend) return pricing.weekend
+  if (slotMinutes !== null && slotMinutes >= eveningStartMinutes) return pricing.weekdayEvening
+  return pricing.weekdayDay
+}
+
+const mapVenueFromApi = (venue, index) => ({
+  ...venue,
+  id: venue.id || venue._id || `venue-${index + 1}`,
+  name: String(venue.name || '').trim(),
+  location: String(venue.location || '').trim(),
+  rating: Number(venue.rating) || 0,
+  price: venue.price || `Day ${toRupees(venue?.pricing?.weekdayDay || venue.pricePerHour || 1200)} · Evening ${toRupees(venue?.pricing?.weekdayEvening || venue.pricePerHour || 1200)} · Weekend ${toRupees(venue?.pricing?.weekend || venue.pricePerHour || 1200)}`,
+  emoji: venue.emoji || '🏟️',
+  type: venue.type || 'Indoor',
+  pricing: venue.pricing || null,
+  operatingHours: venue.operatingHours || null,
+})
+
 export default function BookFutsal() {
   const { user, bookings, setBookings, notifications, setNotifications } = useAuth()
+  const [venueList, setVenueList] = useState(() => (Array.isArray(mockVenues) ? mockVenues.map(mapVenueFromApi) : []))
   const [q,    setQ]   = useState('')
   const [type, setType]= useState('All')
   const [toast,setToast]= useState('')
   const [bookingVenue, setBookingVenue] = useState(null)
   const [selectedDayIndex, setSelectedDayIndex] = useState(0)
+  const canManageTeam = user?.teamAccess !== 'basic' && user?.isCaptain !== false
 
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
   useEffect(() => {
     let active = true
+
+    const seedVenues = Array.isArray(mockVenues) ? mockVenues.map(mapVenueFromApi) : []
+
+    const mergeVenueLists = (liveVenues) => {
+      const combined = [...seedVenues, ...(Array.isArray(liveVenues) ? liveVenues : [])]
+      const uniqueByVenue = [...new Map(combined.map(venue => [
+        `${String(venue.name || '').toLowerCase()}|${String(venue.location || '').toLowerCase()}`,
+        venue,
+      ])).values()]
+
+      return uniqueByVenue.sort((left, right) => {
+        const leftIsSeed = seedVenues.some(seed => seed.name === left.name && seed.location === left.location)
+        const rightIsSeed = seedVenues.some(seed => seed.name === right.name && seed.location === right.location)
+
+        if (leftIsSeed !== rightIsSeed) return leftIsSeed ? 1 : -1
+
+        const leftCreated = new Date(left.createdAt || 0).getTime()
+        const rightCreated = new Date(right.createdAt || 0).getTime()
+        return rightCreated - leftCreated
+      })
+    }
+
+    const loadVenues = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/venues`)
+        if (!response.ok) return
+
+        const data = await response.json()
+        if (!active || !Array.isArray(data)) return
+
+        const mappedVenues = data.map(mapVenueFromApi)
+        const mergedVenues = mergeVenueLists(mappedVenues)
+        setVenueList(mergedVenues.length > 0 ? mergedVenues : seedVenues)
+      } catch (_error) {
+        if (!active) return
+        setVenueList(seedVenues)
+      }
+    }
 
     const loadBookings = async () => {
       try {
@@ -41,10 +153,21 @@ export default function BookFutsal() {
       }
     }
 
+    loadVenues()
     loadBookings()
+
+    const venueRefreshId = setInterval(loadVenues, 5000)
+
+    const handleFocus = () => {
+      loadVenues()
+    }
+
+    window.addEventListener('focus', handleFocus)
 
     return () => {
       active = false
+      clearInterval(venueRefreshId)
+      window.removeEventListener('focus', handleFocus)
     }
   }, [setBookings])
 
@@ -87,21 +210,20 @@ export default function BookFutsal() {
   const openSlotsForVenue = useMemo(() => {
     if (!bookingVenue) return []
 
+    const operatingHours = getVenueOperatingHours(bookingVenue)
+    const openMinutes = parseTimeToMinutes(operatingHours.open) ?? (6 * 60)
+    const closeMinutes = parseTimeToMinutes(operatingHours.close) ?? (22 * 60)
+
     const now = new Date()
     const todayId = now.toISOString().split('T')[0]
     const isToday = selectedBookingDate === todayId
     const nowMinutes = (now.getHours() * 60) + now.getMinutes()
 
     const times = []
-    for (let hour = 6; hour <= 22; hour += 1) {
-      if (isToday) {
-        const slotMinutes = hour * 60
-        if (slotMinutes <= nowMinutes) continue
-      }
+    for (let slotMinutes = openMinutes; slotMinutes + 60 <= closeMinutes; slotMinutes += 60) {
+      if (isToday && slotMinutes <= nowMinutes) continue
 
-      const suffix = hour >= 12 ? 'PM' : 'AM'
-      const displayHour = hour % 12 === 0 ? 12 : hour % 12
-      times.push({ time: `${String(displayHour).padStart(2, '0')}:00 ${suffix}`, status: 'available' })
+      times.push({ time: minutesToTimeLabel(slotMinutes), status: 'available' })
     }
 
     return times
@@ -150,6 +272,11 @@ export default function BookFutsal() {
   }
 
   const book = async (venueObj, dayLabel, slot) => {
+    if (!canManageTeam) {
+      toast$('Only the captain can create bookings.')
+      return
+    }
+
     const bookingDate = bookingDays[selectedDayIndex].id
     const teamName = user?.teamInfo?.name || user?.teamInfo?.teamName || user?.teamName || 'My Team'
     const todayId = new Date().toISOString().split('T')[0]
@@ -203,6 +330,7 @@ export default function BookFutsal() {
     let bookingRecord = null
 
     try {
+      const amount = toRupees(resolveBookingAmount(venueObj, bookingDate, slot))
       const response = await fetch(`${API_BASE}/bookings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -216,7 +344,7 @@ export default function BookFutsal() {
           date: bookingDate,
           time: slot,
           players: 8,
-          amount: 'Rs. 1,200',
+          amount,
         }),
       })
 
@@ -263,7 +391,7 @@ export default function BookFutsal() {
         date: bookingDate,
         time: slot,
         message: `${teamName} has requested to book ${venueName} on ${dayLabel} at ${slot}`,
-        status: 'unread',
+        unread: true,
         createdAt: new Date().toISOString(),
       },
       ...prev,
@@ -272,7 +400,7 @@ export default function BookFutsal() {
     toast$(`✅ Booking request sent to ${venueName} owner for approval!`)
   }
 
-  const filtered = venues.filter(v =>
+  const filtered = venueList.filter(v =>
     v.name.toLowerCase().includes(q.toLowerCase()) &&
     (type==='All' || v.type===type)
   )

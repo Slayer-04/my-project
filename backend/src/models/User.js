@@ -15,14 +15,30 @@ const UserSchema = new mongoose.Schema(
       teamName: { type: String, default: '', trim: true },
       captainName: { type: String, default: '', trim: true },
     },
+    teamAccess: {
+      type: String,
+      enum: ['full', 'basic'],
+      default: 'full',
+    },
+    isCaptain: { type: Boolean, default: true },
     ownerProfile: {
       venueName: { type: String, default: '', trim: true },
       location: { type: String, default: '', trim: true },
+      district: { type: String, default: '', trim: true },
       lat: { type: Number, default: null },
       lng: { type: Number, default: null },
       courts: { type: Number, default: 0, min: 0 },
       phone: { type: String, default: '', trim: true },
       hours: { type: String, default: '', trim: true },
+      operatingHours: {
+        open: { type: String, default: '06:00', trim: true },
+        close: { type: String, default: '22:00', trim: true },
+      },
+      pricing: {
+        weekdayDay: { type: Number, default: 1200, min: 0 },
+        weekdayEvening: { type: Number, default: 1500, min: 0 },
+        weekend: { type: Number, default: 1800, min: 0 },
+      },
       locationVerified: { type: Boolean, default: false },
     },
     status: {

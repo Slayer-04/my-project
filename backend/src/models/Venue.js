@@ -18,6 +18,12 @@ const VenueSchema = new mongoose.Schema(
     },
     courts: { type: Number, required: true, min: 1 },
     pricePerHour: { type: Number, required: true, min: 0 },
+    pricing: {
+      weekdayDay: { type: Number, default: 1200, min: 0 },
+      weekdayEvening: { type: Number, default: 1500, min: 0 },
+      weekend: { type: Number, default: 1800, min: 0 },
+      eveningStart: { type: String, default: '18:00' },
+    },
     lat: { type: Number, default: null },
     lng: { type: Number, default: null },
     operatingHours: {

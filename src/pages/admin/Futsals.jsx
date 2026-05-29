@@ -4,6 +4,20 @@ import Topbar  from '../../components/Topbar.jsx'
 import { futsalPartners as init, users as mockUsers } from '../../data/mockData.js'
 import { useEffect } from 'react'
 import { fetchApiJson } from '../../utils/apiClient.js'
+import { getApiBaseUrl } from '../../utils/apiConfig.js'
+
+const API_BASE = getApiBaseUrl()
+
+const mapVenueToPartner = (venue, index) => ({
+  id: venue.id || venue._id || `venue-${index + 1}`,
+  name: venue.name,
+  owner: venue.owner || 'Unknown',
+  location: venue.location,
+  courts: venue.courts || 1,
+  status: venue.status || 'pending',
+  joined: (venue.createdAt || new Date().toISOString()).split('T')[0],
+  bookings: venue.bookings || 0,
+})
 
 export default function Futsals() {
   const [list,   setList]   = useState(init)
@@ -32,9 +46,51 @@ export default function Futsals() {
 
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
+  useEffect(() => {
+    let mounted = true
+
+    const loadVenues = async () => {
+      try {
+        const { response, data } = await fetchApiJson('/venues')
+        if (!mounted || !response.ok || !Array.isArray(data)) return
+
+        const mapped = data.map(mapVenueToPartner)
+        setList(mapped.length > 0 ? mapped : init)
+      } catch (_e) {
+        if (mounted) setList(init)
+      }
+    }
+
+    loadVenues()
+    const intervalId = setInterval(loadVenues, 5000)
+
+    return () => {
+      mounted = false
+      clearInterval(intervalId)
+    }
+  }, [])
+
   const approve = id => {
     setList(l => l.map(p => p.id===id ? {...p, status:'approved'} : p))
+    fetchApiJson(`/venues/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'approved' }),
+    }).catch(() => {})
     toast$('✅ Partner approved!')
+  }
+
+  const remove = async (id) => {
+    const confirmed = window.confirm('Delete this futsal partner?')
+    if (!confirmed) return
+
+    setList(prev => prev.filter(item => String(item.id) !== String(id)))
+    try {
+      await fetchApiJson(`/venues/${id}`, { method: 'DELETE' })
+    } catch (_e) {
+      // local removal already happened; next refresh will reconcile
+    }
+    toast$('🗑️ Partner removed!')
   }
 
   const add = async () => {
@@ -146,6 +202,9 @@ export default function Futsals() {
                       <i className="fas fa-check" /> Approve
                     </button>
                   )}
+                  <button className="btn btn-outline btn-sm" onClick={() => remove(p.id)}>
+                    <i className="fas fa-trash" /> Delete
+                  </button>
                 </div>
               </div>
             ))}
@@ -221,6 +280,9 @@ export default function Futsals() {
                   <i className="fas fa-check" /> Approve Partner
                 </button>
               )}
+              <button className="btn btn-outline" style={{ flex:1 }} onClick={() => { remove(detail.id); setDetail(null) }}>
+                <i className="fas fa-trash" /> Delete Partner
+              </button>
               <button className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
             </div>
           </div>

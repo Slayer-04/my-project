@@ -1,15 +1,63 @@
 import React, { useEffect, useState } from 'react'
 import { useAuth } from '../App.jsx'
-import { selectOptimalMatchLocation } from '../utils/venueSelector.js'
 import { getApiBaseUrl } from '../utils/apiConfig.js'
+import { onChallengeCreated } from '../utils/socketService.js'
 
 const API_BASE = getApiBaseUrl()
 
 export default function Topbar({ title, breadcrumb }) {
   const { user, notifications, setNotifications, challenges, setChallenges, bookings, setBookings } = useAuth()
   const [open, setOpen] = useState(false)
-  const myTeamName = user?.teamInfo?.name || user?.teamInfo?.teamName || user?.teamName || ''
-  const visibleNotifications = notifications.filter(n => !n.team || n.team === myTeamName).slice(0, 8)
+  const [showAllNotifications, setShowAllNotifications] = useState(false)
+  const myTeamName = user?.teamInfo?.name || user?.teamInfo?.teamName || user?.teamInfo?.captainName || user?.name || user?.teamName || ''
+
+  const isUnreadNotification = (notification) => notification?.unread !== false && notification?.status !== 'read'
+
+  const resolveId = (value) => {
+    if (!value) return ''
+    if (typeof value === 'string' || typeof value === 'number') return String(value)
+    if (typeof value === 'object') return String(value._id || value.id || '')
+    return ''
+  }
+
+  const challengeById = (id) => challenges.find(challenge => resolveId(challenge.id) === resolveId(id)) || null
+
+  const notificationKey = (notification) => {
+    if (notification?.type === 'challenge-request') {
+      return `challenge:${resolveId(notification.challengeId)}`
+    }
+
+    if (notification?.type === 'join-request') {
+      return `join:${resolveId(notification.joinRequestId) || resolveId(notification.id)}:${notification.joinRequestStatus || 'pending'}`
+    }
+
+    return `notification:${resolveId(notification?.id)}`
+  }
+
+  const dedupeNotifications = (items) => {
+    const seen = new Set()
+
+    return items.filter(notification => {
+      const key = notificationKey(notification)
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }
+
+  const visibleNotifications = dedupeNotifications(notifications).map(notification => ({
+    ...notification,
+    unread: isUnreadNotification(notification),
+  }))
+    .filter(n => {
+      if (n.team && n.team !== myTeamName) return false
+
+      if (n.type !== 'challenge-request') return true
+
+      const challenge = challengeById(resolveId(n.challengeId))
+      return !challenge || challenge.status === 'pending'
+    })
+  const shownNotifications = showAllNotifications ? visibleNotifications : visibleNotifications.slice(0, 8)
   const unreadCount = visibleNotifications.filter(n => n.unread).length
 
   useEffect(() => {
@@ -17,37 +65,137 @@ export default function Topbar({ title, breadcrumb }) {
 
     let active = true
 
-    const loadNotifications = async () => {
+    const loadTeamData = async () => {
       try {
-        const response = await fetch(`${API_BASE}/notifications/team/${encodeURIComponent(myTeamName)}`)
-        const data = await response.json()
-        if (!active || !response.ok || !Array.isArray(data)) return
+        const [notificationsResponse, challengesResponse] = await Promise.all([
+          fetch(`${API_BASE}/notifications/team/${encodeURIComponent(myTeamName)}`),
+          fetch(`${API_BASE}/challenges/team/${encodeURIComponent(myTeamName)}`),
+        ])
 
-        const mapped = data.map(notification => ({
-          ...notification,
-          id: notification._id || notification.id,
-          time: notification.time || 'just now',
-          unread: notification.unread !== false,
-          joinRequestStatus: notification.joinRequestStatus || (notification.type === 'join-request' ? 'pending' : ''),
-        }))
+        const notificationsData = await notificationsResponse.json()
+        const challengesData = await challengesResponse.json()
+        const mappedNotifications = Array.isArray(notificationsData)
+          ? notificationsData.map(notification => ({
+              ...notification,
+              id: notification._id || notification.id,
+              time: notification.time || 'just now',
+              unread: isUnreadNotification(notification),
+              joinRequestStatus: notification.joinRequestStatus || (notification.type === 'join-request' ? 'pending' : ''),
+            }))
+          : []
 
-        setNotifications(prev => {
-          const otherNotifications = prev.filter(notification => notification.team && notification.team !== myTeamName)
-          const localOnlyForTeam = prev.filter(
-            notification => (!notification.team || notification.team === myTeamName) && !notification._id && !notification.id
-          )
-          return [...otherNotifications, ...mapped, ...localOnlyForTeam]
-        })
+        if (!active) return
+
+        const challengeStatusById = new Map(
+          Array.isArray(challengesData)
+            ? challengesData.map(challenge => [resolveId(challenge._id || challenge.id), challenge.status])
+            : []
+        )
+
+        if (notificationsResponse.ok && Array.isArray(notificationsData)) {
+          setNotifications(prev => {
+            const otherNotifications = prev.filter(notification => notification.team && notification.team !== myTeamName)
+            const localOnlyForTeam = prev.filter(
+              notification => (!notification.team || notification.team === myTeamName) && !notification._id && !notification.id
+            )
+            const filteredMappedNotifications = mappedNotifications.filter(notification => {
+              if (notification.type !== 'challenge-request') return true
+
+              const challengeStatus = challengeStatusById.get(resolveId(notification.challengeId))
+              return !challengeStatus || challengeStatus === 'pending'
+            })
+
+            return dedupeNotifications([...otherNotifications, ...filteredMappedNotifications, ...localOnlyForTeam])
+          })
+        }
+
+        if (challengesResponse.ok && Array.isArray(challengesData)) {
+          const challengeNotifications = challengesData
+            .filter(challenge => challenge && challenge.to === myTeamName && challenge.status === 'pending')
+            .map(challenge => ({
+              id: `challenge-${challenge._id || challenge.id}`,
+              team: myTeamName,
+              type: 'challenge-request',
+              challengeId: challenge._id || challenge.id,
+              text: `${challenge.from} sent you a match request for ${challenge.venue} on ${challenge.date} at ${challenge.time}.`,
+              time: 'just now',
+              unread: true,
+              createdAt: challenge.createdAt || new Date().toISOString(),
+              joinRequestStatus: '',
+            }))
+
+          setChallenges(prev => {
+            const otherTeamChallenges = prev.filter(challenge => challenge.to !== myTeamName && challenge.from !== myTeamName)
+            const mappedChallenges = challengesData.map(challenge => ({
+              ...challenge,
+              id: challenge._id || challenge.id,
+            }))
+            return [...otherTeamChallenges, ...mappedChallenges]
+          })
+
+          setNotifications(prev => {
+            const withoutCurrentTeam = prev.filter(notification => notification.team && notification.team !== myTeamName)
+            const localOnlyForTeam = prev.filter(
+              notification => (!notification.team || notification.team === myTeamName) && !notification._id && !notification.id
+            )
+
+            const existingChallengeIds = new Set(
+              [...withoutCurrentTeam, ...localOnlyForTeam, ...mappedNotifications].map(notification => resolveId(notification.challengeId))
+            )
+
+            const mergedChallengeNotifications = challengeNotifications.filter(notification => {
+              const challengeId = resolveId(notification.challengeId)
+              return challengeId && !existingChallengeIds.has(challengeId)
+            })
+
+            return dedupeNotifications([...withoutCurrentTeam, ...mappedNotifications, ...localOnlyForTeam, ...mergedChallengeNotifications])
+          })
+        }
       } catch (_error) {
         // Keep existing in-memory notifications if the backend is unavailable.
       }
     }
 
-    loadNotifications()
-    return () => { active = false }
-  }, [myTeamName, setNotifications, user?.role])
+    loadTeamData()
+    const intervalId = setInterval(loadTeamData, 4000)
 
-  const challengeById = id => challenges.find(challenge => challenge.id === id) || null
+    return () => {
+      active = false
+      clearInterval(intervalId)
+    }
+  }, [myTeamName, setChallenges, setNotifications, user?.role])
+
+  useEffect(() => {
+    if (user?.role !== 'team' || !myTeamName) return
+
+    const unsubscribe = onChallengeCreated((challengeData) => {
+      if (!challengeData || challengeData.to !== myTeamName) return
+
+      setNotifications(prev => {
+        const alreadyExists = prev.some(notification => (
+          resolveId(notification.challengeId) === resolveId(challengeData.id)
+          || notification.text === `${challengeData.from} sent you a match request.`
+        ))
+
+        if (alreadyExists) return prev
+
+        return dedupeNotifications([{
+          id: Date.now(),
+          team: myTeamName,
+          type: 'challenge-request',
+          challengeId: challengeData.id,
+          text: `${challengeData.from} sent you a match request for ${challengeData.venue} on ${challengeData.date} at ${challengeData.time}.`,
+          time: 'just now',
+          unread: true,
+          createdAt: new Date().toISOString(),
+        }, ...prev])
+      })
+    })
+
+    return () => {
+      if (unsubscribe) unsubscribe()
+    }
+  }, [myTeamName, setNotifications, user?.role])
 
   const updateNotificationStatus = (notificationId, text) => {
     setNotifications(prev => prev.map(notification => (
@@ -55,6 +203,34 @@ export default function Topbar({ title, breadcrumb }) {
         ? { ...notification, unread: false, text }
         : notification
     )))
+  }
+
+  const removeNotification = (notification) => {
+    const challengeId = resolveId(notification?.challengeId)
+    const notificationId = resolveId(notification?.id)
+
+    setNotifications(prev => prev.filter(item => {
+      if (notification?.type === 'challenge-request') {
+        return resolveId(item.challengeId) !== challengeId
+      }
+
+      return resolveId(item.id) !== notificationId
+    }))
+  }
+
+  const patchChallengeStatus = async (challengeId, status) => {
+    if (!challengeId) return
+
+    const response = await fetch(`${API_BASE}/challenges/${challengeId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      throw new Error(errorData.message || 'Failed to update challenge.')
+    }
   }
 
   const handleJoinRequestAction = async (notification, action) => {
@@ -98,31 +274,28 @@ export default function Topbar({ title, breadcrumb }) {
     }
   }
 
-  const acceptChallengeFromNotif = (notification) => {
-    const challenge = challengeById(notification.challengeId)
+  const acceptChallengeFromNotif = async (notification) => {
+    const challenge = challengeById(resolveId(notification.challengeId))
     if (!challenge || challenge.to !== myTeamName || challenge.status !== 'pending') {
-      updateNotificationStatus(notification.id, notification.text)
+      removeNotification(notification)
       return
     }
 
-    const useExactSchedule = Boolean(challenge.exactSchedule)
-    const location = useExactSchedule
-      ? { venue: challenge.venue, time: challenge.time }
-      : selectOptimalMatchLocation(
-          challenge.from,
-          myTeamName,
-          challenge.date || new Date().toISOString().split('T')[0],
-          challenge.time,
-          bookings
-        )
-
-    // Update challenge status with selected venue and time
     const bookingDate = challenge.date || new Date().toISOString().split('T')[0]
+    const bookingTime = challenge.time
+    const bookingVenue = challenge.venue
+
     setChallenges(prev => prev.map(item => (
       item.id === challenge.id 
-        ? { ...item, status: 'accepted', venue: location.venue, time: location.time } 
+        ? { ...item, status: 'accepted', venue: bookingVenue, time: bookingTime } 
         : item
     )))
+
+    try {
+      await patchChallengeStatus(resolveId(challenge.id), 'accepted')
+    } catch (_error) {
+      return
+    }
 
     // Add bookings for BOTH teams so they both see it in upcoming bookings
     const baseBookingId = Date.now()
@@ -131,9 +304,9 @@ export default function Topbar({ title, breadcrumb }) {
       {
         id: baseBookingId,
         team: myTeamName,
-        venue: location.venue,
+        venue: bookingVenue,
         date: bookingDate,
-        time: location.time,
+        time: bookingTime,
         status: 'confirmed',
         players: 11,
         amount: 'Rs. 1,200',
@@ -143,9 +316,9 @@ export default function Topbar({ title, breadcrumb }) {
       {
         id: baseBookingId + 1,
         team: challenge.from,
-        venue: location.venue,
+        venue: bookingVenue,
         date: bookingDate,
-        time: location.time,
+        time: bookingTime,
         status: 'confirmed',
         players: 11,
         amount: 'Rs. 1,200',
@@ -154,25 +327,27 @@ export default function Topbar({ title, breadcrumb }) {
       }
     ])
 
-    updateNotificationStatus(
-      notification.id,
-      useExactSchedule
-        ? `✅ Challenge accepted with exact schedule: ${location.venue} at ${location.time}`
-        : `✅ Challenge accepted! Match at ${location.venue} at ${location.time}`
-    )
+    removeNotification(notification)
   }
 
-  const declineChallengeFromNotif = (notification) => {
-    const challenge = challengeById(notification.challengeId)
+  const declineChallengeFromNotif = async (notification) => {
+    const challenge = challengeById(resolveId(notification.challengeId))
     if (!challenge || challenge.to !== myTeamName || challenge.status !== 'pending') {
-      updateNotificationStatus(notification.id, notification.text)
+      removeNotification(notification)
       return
     }
 
     setChallenges(prev => prev.map(item => (
       item.id === challenge.id ? { ...item, status: 'declined' } : item
     )))
-    updateNotificationStatus(notification.id, `${challenge.from} challenge declined.`)
+
+    try {
+      await patchChallengeStatus(resolveId(challenge.id), 'declined')
+    } catch (_error) {
+      return
+    }
+
+    removeNotification(notification)
   }
 
   return (
@@ -202,12 +377,12 @@ export default function Topbar({ title, breadcrumb }) {
                   <div className="notif-time">You are all caught up</div>
                 </div>
               )}
-              {visibleNotifications.map((n, i) => (
+              {shownNotifications.map((n, i) => (
                 <div key={i} className={`notif-item ${n.unread ? 'unread' : ''}`}>
                   <div className="notif-text">{n.text}</div>
                   <div className="notif-time">{n.time}</div>
                   {n.type === 'challenge-request' && (() => {
-                    const challenge = challengeById(n.challengeId)
+                    const challenge = challengeById(resolveId(n.challengeId))
                     const actionable = challenge && challenge.status === 'pending' && challenge.to === myTeamName
                     if (!actionable) return null
 
@@ -246,7 +421,13 @@ export default function Topbar({ title, breadcrumb }) {
                   )}
                 </div>
               ))}
-              <div className="notif-footer">View all notifications</div>
+              <button
+                type="button"
+                className="notif-footer"
+                onClick={() => setShowAllNotifications(prev => !prev)}
+              >
+                {showAllNotifications ? 'Show fewer notifications' : `View all notifications${visibleNotifications.length > 8 ? ` (${visibleNotifications.length})` : ''}`}
+              </button>
             </div>
           )}
         </div>

@@ -11,6 +11,98 @@ const router = express.Router()
 
 const norm = value => (typeof value === 'string' ? value.trim() : '')
 
+const DEFAULT_PRICE_PLAN = {
+  weekdayDay: 1200,
+  weekdayEvening: 1500,
+  weekend: 1800,
+  eveningStart: '18:00',
+}
+
+const parseTimeToMinutes = (value) => {
+  const text = norm(value)
+  if (!text) return null
+
+  const is12Hour = /\b(AM|PM)\b/i.test(text)
+  if (is12Hour) {
+    const [timePart, meridiemRaw] = text.split(' ')
+    if (!timePart || !meridiemRaw) return null
+
+    const [hourRaw, minuteRaw] = timePart.split(':')
+    const hour = Number(hourRaw)
+    const minute = Number(minuteRaw)
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+
+    const meridiem = meridiemRaw.toUpperCase()
+    let normalizedHour = hour
+    if (meridiem === 'PM' && normalizedHour !== 12) normalizedHour += 12
+    if (meridiem === 'AM' && normalizedHour === 12) normalizedHour = 0
+    return (normalizedHour * 60) + minute
+  }
+
+  const [hourRaw, minuteRaw] = text.split(':')
+  const hour = Number(hourRaw)
+  const minute = Number(minuteRaw)
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+  return (hour * 60) + minute
+}
+
+const formatRupees = (value) => `Rs. ${Number(value || 0).toLocaleString('en-IN')}`
+
+const parsePricePlan = (ownerProfile = {}) => {
+  const weekdayDay = Number(ownerProfile.weekdayPrice ?? ownerProfile.dayPrice ?? ownerProfile.pricePerHour)
+  const weekdayEvening = Number(ownerProfile.eveningPrice ?? ownerProfile.nightPrice)
+  const weekend = Number(ownerProfile.weekendPrice)
+  const eveningStart = norm(ownerProfile.eveningStart) || DEFAULT_PRICE_PLAN.eveningStart
+
+  return {
+    weekdayDay: Number.isFinite(weekdayDay) && weekdayDay >= 0 ? weekdayDay : DEFAULT_PRICE_PLAN.weekdayDay,
+    weekdayEvening: Number.isFinite(weekdayEvening) && weekdayEvening >= 0 ? weekdayEvening : DEFAULT_PRICE_PLAN.weekdayEvening,
+    weekend: Number.isFinite(weekend) && weekend >= 0 ? weekend : DEFAULT_PRICE_PLAN.weekend,
+    eveningStart,
+  }
+}
+
+const parseOperatingHours = (ownerProfile = {}) => {
+  const explicitOpen = norm(ownerProfile.operatingOpen)
+  const explicitClose = norm(ownerProfile.operatingClose)
+  const explicitHours = norm(ownerProfile.hours)
+  const [parsedOpen, parsedClose] = explicitHours.includes('-')
+    ? explicitHours.split('-').map(part => norm(part))
+    : ['', '']
+
+  return {
+    open: explicitOpen || parsedOpen || '06:00',
+    close: explicitClose || parsedClose || '22:00',
+  }
+}
+
+const buildPriceSummary = (pricing) => (
+  `Day ${formatRupees(pricing.weekdayDay)} · Evening ${formatRupees(pricing.weekdayEvening)} · Weekend ${formatRupees(pricing.weekend)}`
+)
+
+const resolveBookingAmount = (venue, dateValue, timeValue) => {
+  const pricing = venue?.pricing || parsePricePlan(venue || {})
+  const bookingDate = new Date(`${dateValue}T00:00:00`)
+  const isWeekend = !Number.isNaN(bookingDate.getTime()) && [0, 6].includes(bookingDate.getDay())
+  const timeMinutes = parseTimeToMinutes(timeValue)
+  const eveningStartMinutes = parseTimeToMinutes(pricing.eveningStart || DEFAULT_PRICE_PLAN.eveningStart) ?? (18 * 60)
+
+  if (isWeekend) return pricing.weekend
+  if (timeMinutes !== null && timeMinutes >= eveningStartMinutes) return pricing.weekdayEvening
+  return pricing.weekdayDay
+}
+
+const isBookingWithinOperatingHours = (venue, timeValue) => {
+  const operatingHours = venue?.operatingHours || parseOperatingHours(venue || {})
+  const startMinutes = parseTimeToMinutes(operatingHours.open)
+  const endMinutes = parseTimeToMinutes(operatingHours.close)
+  const timeMinutes = parseTimeToMinutes(timeValue)
+
+  if (startMinutes === null || endMinutes === null || timeMinutes === null) return true
+
+  return timeMinutes >= startMinutes && (timeMinutes + 60) <= endMinutes
+}
+
 const getSlotQuery = booking => {
   if (booking.venueId) {
     return { venueId: booking.venueId, date: booking.date, time: booking.time }
@@ -20,6 +112,85 @@ const getSlotQuery = booking => {
 }
 
 const sameEmail = (left, right) => norm(left).toLowerCase() === norm(right).toLowerCase()
+
+const buildVenueFromOwnerProfile = (user, ownerProfile) => {
+  const venueName = norm(ownerProfile.venueName)
+  const location = norm(ownerProfile.location)
+  const district = norm(ownerProfile.district)
+  const courts = Math.max(1, Number(ownerProfile.courts) || 1)
+  const phone = norm(ownerProfile.phone)
+  const operatingHours = parseOperatingHours(ownerProfile)
+  const pricing = parsePricePlan(ownerProfile)
+
+  return {
+    filter: { ownerEmail: norm(user.email).toLowerCase() || venueName },
+    update: {
+      name: venueName,
+      location,
+      rating: 4.5,
+      price: buildPriceSummary(pricing),
+      emoji: '🏟️',
+      type: 'Indoor',
+      courts,
+      pricePerHour: pricing.weekdayDay,
+      pricing,
+      lat: Number(ownerProfile.lat),
+      lng: Number(ownerProfile.lng),
+      owner: norm(user.name),
+      ownerEmail: norm(user.email).toLowerCase(),
+      contactPhone: phone,
+      operatingHours,
+      amenities: district ? [district] : [],
+    },
+  }
+}
+
+const normalizeVenueRecord = venue => ({
+  ...venue.toObject ? venue.toObject() : venue,
+  id: venue._id || venue.id,
+})
+
+const buildVenueFromOwnerUser = user => {
+  const ownerProfile = user.ownerProfile || {}
+  const venueName = norm(ownerProfile.venueName)
+  const location = norm(ownerProfile.location)
+  if (!venueName || !location) return null
+
+  return {
+    id: user._id,
+    _id: user._id,
+    uid: String(user.venueUid || user._id),
+    name: venueName,
+    location,
+    rating: 4.5,
+    price: buildPriceSummary(parsePricePlan(ownerProfile)),
+    emoji: '🏟️',
+    type: 'Indoor',
+    courts: Math.max(1, Number(ownerProfile.courts) || 1),
+    pricePerHour: parsePricePlan(ownerProfile).weekdayDay,
+    pricing: parsePricePlan(ownerProfile),
+    lat: Number(ownerProfile.lat) || null,
+    lng: Number(ownerProfile.lng) || null,
+    owner: norm(user.name),
+    ownerEmail: norm(user.email).toLowerCase(),
+    contactPhone: norm(ownerProfile.phone),
+    operatingHours: parseOperatingHours(ownerProfile),
+    createdAt: user.updatedAt || user.createdAt || new Date(),
+  }
+}
+
+const createBookingStatusNotification = async (booking, statusText) => {
+  if (!booking?.team) return
+
+  await Notification.create({
+    team: booking.team,
+    text: statusText,
+    type: 'match-update',
+    bookingId: booking._id,
+    unread: true,
+    createdAt: new Date(),
+  })
+}
 
 /* ────────────────────────────────────────────────────────────────── */
 /* BOOKINGS ROUTES                                                    */
@@ -123,6 +294,15 @@ router.post('/bookings', async (req, res) => {
     const resolvedVenueName = linkedVenue ? linkedVenue.name : normalizedVenue
     const resolvedOwnerName = norm(ownerName) || norm(linkedVenue?.owner)
     const resolvedOwnerEmail = norm(ownerEmail).toLowerCase() || norm(linkedVenue?.ownerEmail).toLowerCase()
+    const canUseLinkedVenue = Boolean(linkedVenue)
+
+    if (canUseLinkedVenue && !isBookingWithinOperatingHours(linkedVenue, normalizedTime)) {
+      return res.status(400).json({ message: 'Selected time is outside the venue operating hours.' })
+    }
+
+    const computedAmount = canUseLinkedVenue
+      ? formatRupees(resolveBookingAmount(linkedVenue, normalizedDate, normalizedTime))
+      : norm(amount) || 'Rs. 1,200'
 
     const confirmedConflict = await Booking.findOne({
       ...(resolvedVenueId
@@ -162,7 +342,7 @@ router.post('/bookings', async (req, res) => {
       time: normalizedTime,
       status: 'pending',
       players: players || 11,
-      amount: amount || 'Rs. 1,200',
+      amount: computedAmount,
       opponent: opponent ? norm(opponent) : '',
       challengeId: challengeId || null,
       note: note ? norm(note) : '',
@@ -210,6 +390,11 @@ router.post('/bookings/:id/confirm', async (req, res) => {
     booking.status = 'confirmed'
     await booking.save()
 
+    await createBookingStatusNotification(
+      booking,
+      `${booking.ownerName || booking.venue} confirmed your booking for ${booking.date} at ${booking.time}.`
+    )
+
     const cancelResult = await Booking.updateMany(
       {
         ...slotQuery,
@@ -218,6 +403,19 @@ router.post('/bookings/:id/confirm', async (req, res) => {
       },
       { $set: { status: 'cancelled' } }
     )
+
+    if (cancelResult.modifiedCount > 0) {
+      const cancelledBookings = await Booking.find({
+        ...slotQuery,
+        status: 'cancelled',
+        _id: { $ne: booking._id },
+      })
+
+      await Promise.all(cancelledBookings.map(cancelledBooking => createBookingStatusNotification(
+        cancelledBooking,
+        `${booking.ownerName || booking.venue} confirmed another booking for ${booking.date} at ${booking.time}. Your request for ${cancelledBooking.venue} was not accepted.`
+      )))
+    }
 
     return res.json({
       message: 'Booking confirmed successfully.',
@@ -253,6 +451,11 @@ router.post('/bookings/:id/cancel', async (req, res) => {
 
     booking.status = 'cancelled'
     await booking.save()
+
+    await createBookingStatusNotification(
+      booking,
+      `${booking.ownerName || booking.venue} declined your booking for ${booking.date} at ${booking.time}.`
+    )
 
     return res.json({ message: 'Booking cancelled successfully.', booking })
   } catch (error) {
@@ -338,6 +541,15 @@ router.post('/challenges', async (req, res) => {
       status: status || 'pending',
       note: note ? note.trim() : '',
       sentAt: new Date(),
+    })
+
+    await Notification.create({
+      team: to.trim(),
+      text: `${from.trim()} sent you a match request for ${venue.trim()} on ${date.trim()} at ${time.trim()}.`,
+      type: 'challenge-request',
+      challengeId: challenge._id,
+      unread: true,
+      createdAt: new Date(),
     })
 
     return res.status(201).json({ message: 'Challenge created successfully.', challenge })
@@ -488,8 +700,36 @@ router.patch('/notifications/:id', async (req, res) => {
 
 router.get('/venues', async (_req, res) => {
   try {
-    const venues = await Venue.find({}).sort({ rating: -1 })
-    return res.json(venues)
+    const [venues, ownerUsers] = await Promise.all([
+      Venue.find({}).sort({ createdAt: -1 }),
+      User.find({ role: 'owner' }).select('name email ownerProfile venueUid updatedAt createdAt').sort({ updatedAt: -1 }),
+    ])
+
+    const mergedByKey = new Map()
+
+    venues.forEach(venue => {
+      const normalized = normalizeVenueRecord(venue)
+      const key = `${norm(normalized.name).toLowerCase()}|${norm(normalized.ownerEmail).toLowerCase()}`
+      mergedByKey.set(key, normalized)
+    })
+
+    ownerUsers.forEach(user => {
+      const derivedVenue = buildVenueFromOwnerUser(user)
+      if (!derivedVenue) return
+
+      const key = `${norm(derivedVenue.name).toLowerCase()}|${norm(derivedVenue.ownerEmail).toLowerCase()}`
+      if (!mergedByKey.has(key)) {
+        mergedByKey.set(key, derivedVenue)
+      }
+    })
+
+    const mergedVenues = Array.from(mergedByKey.values()).sort((left, right) => {
+      const leftCreated = new Date(left.createdAt || 0).getTime()
+      const rightCreated = new Date(right.createdAt || 0).getTime()
+      return rightCreated - leftCreated
+    })
+
+    return res.json(mergedVenues)
   } catch (error) {
     return res.status(500).json({ message: 'Failed to fetch venues.', error: error.message })
   }
@@ -538,6 +778,20 @@ router.patch('/venues/:id', async (req, res) => {
     return res.json({ message: 'Venue updated successfully.', venue })
   } catch (error) {
     return res.status(500).json({ message: 'Failed to update venue.', error: error.message })
+  }
+})
+
+router.delete('/venues/:id', async (req, res) => {
+  try {
+    const venue = await Venue.findByIdAndDelete(req.params.id)
+
+    if (!venue) {
+      return res.status(404).json({ message: 'Venue not found.' })
+    }
+
+    return res.json({ message: 'Venue deleted successfully.', venue })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to delete venue.', error: error.message })
   }
 })
 
@@ -629,10 +883,14 @@ router.patch('/users/:id/profile', async (req, res) => {
     const ownerProfile = req.body?.ownerProfile || {}
     const venueName = String(ownerProfile.venueName || '').trim()
     const location = String(ownerProfile.location || '').trim()
+    const district = String(ownerProfile.district || '').trim()
     const courtsRaw = ownerProfile.courts
     const courts = Number(courtsRaw)
     const phone = String(ownerProfile.phone || '').trim()
     const hours = String(ownerProfile.hours || '').trim()
+    const operatingOpen = String(ownerProfile.operatingOpen || hours.split('-')[0] || '06:00').trim()
+    const operatingClose = String(ownerProfile.operatingClose || hours.split('-')[1] || '22:00').trim()
+    const pricing = parsePricePlan(ownerProfile)
     const lat = Number(ownerProfile.lat)
     const lng = Number(ownerProfile.lng)
 
@@ -647,15 +905,30 @@ router.patch('/users/:id/profile', async (req, res) => {
     user.ownerProfile = {
       venueName,
       location,
+      district: district || location,
       lat,
       lng,
       courts: Number.isFinite(courts) && courts >= 0 ? courts : 0,
       phone,
-      hours,
+      hours: `${operatingOpen}-${operatingClose}`,
+      operatingHours: {
+        open: operatingOpen,
+        close: operatingClose,
+      },
+      pricing,
       locationVerified: true,
     }
     user.profileCompleted = true
     await user.save()
+
+    const { filter, update } = buildVenueFromOwnerProfile(user, user.ownerProfile)
+    let venue = await Venue.findOne(filter)
+    if (!venue) {
+      venue = await Venue.create(update)
+    } else {
+      Object.assign(venue, update)
+      await venue.save()
+    }
 
     return res.json({
       message: 'Owner profile updated.',
@@ -667,6 +940,7 @@ router.patch('/users/:id/profile', async (req, res) => {
         profileCompleted: user.profileCompleted,
         ownerProfile: user.ownerProfile,
       },
+      venue,
     })
   } catch (error) {
     return res.status(500).json({ message: 'Failed to update owner profile.', error: error.message })

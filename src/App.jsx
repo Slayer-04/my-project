@@ -45,7 +45,13 @@ function TeamProfileGuard({ children }) {
   const { user } = useAuth()
   if (!user) return <Navigate to="/login" replace />
   if (user.role !== 'team') return <Navigate to="/login" replace />
-  if (!user.teamProfileCompleted) return <Navigate to="/team/choice" replace />
+  try {
+    const seenKey = `fotmatch.seenTeamChoice:${user.id || user.email || ''}`
+    const seen = typeof window !== 'undefined' && localStorage.getItem(seenKey)
+    if (!user.teamProfileCompleted && !seen) return <Navigate to="/team/choice" replace />
+  } catch (_e) {
+    if (!user.teamProfileCompleted) return <Navigate to="/team/choice" replace />
+  }
   return children
 }
 
@@ -53,7 +59,13 @@ function TeamFeatureGuard({ children }) {
   const { user } = useAuth()
   if (!user) return <Navigate to="/login" replace />
   if (user.role !== 'team') return <Navigate to="/login" replace />
-  if (!user.teamProfileCompleted) return <Navigate to="/team/choice" replace />
+  try {
+    const seenKey = `fotmatch.seenTeamChoice:${user.id || user.email || ''}`
+    const seen = typeof window !== 'undefined' && localStorage.getItem(seenKey)
+    if (!user.teamProfileCompleted && !seen) return <Navigate to="/team/choice" replace />
+  } catch (_e) {
+    if (!user.teamProfileCompleted) return <Navigate to="/team/choice" replace />
+  }
   if (user.teamAccess === 'basic') return <Navigate to="/team" replace />
   return children
 }

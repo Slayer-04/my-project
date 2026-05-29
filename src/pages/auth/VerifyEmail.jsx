@@ -61,10 +61,20 @@ export default function VerifyEmail() {
           name: verifiedTeam.captainName || verifiedTeam.name || '',
           email,
           role: 'team',
+          teamAccess: 'full',
+          isCaptain: true,
           teamProfileCompleted: verifiedTeam.teamProfileCompleted,
           eloRating: verifiedTeam.eloRating || 1000,
           eloMatchesPlayed: verifiedTeam.eloMatchesPlayed || 0,
-          teamName: verifiedTeam.teamName || '',
+          teamName: verifiedTeam.teamName || verifiedTeam.captainName || verifiedTeam.name || '',
+          teamInfo: {
+            teamId: verifiedTeam._id,
+            name: verifiedTeam.teamName || verifiedTeam.captainName || verifiedTeam.name || '',
+            teamName: verifiedTeam.teamName || verifiedTeam.captainName || verifiedTeam.name || '',
+            captainName: verifiedTeam.captainName || verifiedTeam.name || '',
+            location: verifiedTeam.location || '',
+            district: verifiedTeam.district || '',
+          },
         })
 
         navigate(verifiedTeam.teamProfileCompleted ? '/team' : '/team/choice')
