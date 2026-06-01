@@ -344,6 +344,37 @@ const buildPostsFromTeams = (teamList) => (
   }))
 )
 
+const parseScheduledPostDate = (post) => {
+  const dateText = String(post?.date || '').trim()
+  if (!dateText) return null
+
+  const scheduledDate = new Date(dateText)
+  if (Number.isNaN(scheduledDate.getTime())) return null
+
+  const timeText = String(post?.time || '').trim()
+  const timeMatch = timeText.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i)
+  if (timeMatch) {
+    let hours = Number(timeMatch[1])
+    const minutes = Number(timeMatch[2])
+    const meridiem = timeMatch[3]?.toUpperCase()
+
+    if (meridiem === 'PM' && hours !== 12) hours += 12
+    if (meridiem === 'AM' && hours === 12) hours = 0
+
+    scheduledDate.setHours(hours, minutes, 0, 0)
+  } else {
+    scheduledDate.setHours(23, 59, 59, 999)
+  }
+
+  return scheduledDate
+}
+
+const isActiveMatchPost = (post) => {
+  const scheduledDate = parseScheduledPostDate(post)
+  if (!scheduledDate) return true
+  return scheduledDate.getTime() >= Date.now()
+}
+
 export default function FindMatch() {
   const { user, challenges, setChallenges, setNotifications, matchPosts, setMatchPosts, bookings, setBookings } = useAuth()
   const [teams,     setTeams]     = useState(mockTeams)
@@ -383,7 +414,7 @@ export default function FindMatch() {
     winRate: 0.58,
   }), [currentTeamName, user?.eloRating, user?.locationVerified, user?.skill, user?.teamInfo?.eloRating, user?.teamInfo?.lat, user?.teamInfo?.lng, user?.teamInfo?.location, user?.teamInfo?.losses, user?.teamInfo?.preferredDay, user?.teamInfo?.preferredTime, user?.teamInfo?.skill, user?.teamInfo?.streak, user?.teamInfo?.teamName, user?.teamInfo?.name, user?.teamInfo?.wins, user?.teamName, user?.teamProfileCompleted])
   const currentTeamLocation = myTeam.location
-  const safeMatchPosts = Array.isArray(matchPosts) ? matchPosts : []
+  const safeMatchPosts = (Array.isArray(matchPosts) ? matchPosts : []).filter(isActiveMatchPost)
 
   const venueCoordinateMap = useMemo(() => {
     const map = new Map()

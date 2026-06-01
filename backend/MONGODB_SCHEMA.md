@@ -1,263 +1,306 @@
 # FotMatch MongoDB Schema Documentation
 
 ## Overview
-FotMatch uses MongoDB as its primary database with the following collections to manage teams, matches, challenges, venues, and match results.
+MongoDB is the source of truth for FotMatch data. Each Mongoose model maps to one collection, and the collections below cover the full application state: auth, teams, venues, bookings, challenges, match history, score submissions, notifications, join requests, and pending registrations.
 
----
+## Collection Summary
 
-## Collections & Schema
+| Collection | Model | Purpose | Main Relations | Key Indexes |
+| --- | --- | --- | --- | --- |
+| `teams` | `Team` | Team profile, rating, and match stats | `users.teamInfo.teamId` | `uid`, `email` |
+| `users` | `User` | Login identity and role-specific profile | `teamInfo.teamId` -> `teams` | `email` |
+| `venues` | `Venue` | Futsal venues and pricing | referenced by bookings | `uid`, `name` |
+| `bookings` | `Booking` | Court reservations and confirmations | `venueId` -> `venues`, `challengeId` -> `challenges` | booking lookups by `team`, `ownerEmail`, `venue`, `date` |
+| `challenges` | `Challenge` | Team-vs-team match requests | referenced by notifications | `from`, `to`, `createdAt` |
+| `matches` | `Match` | Historical match record | `bookingId` -> `bookings` | `team`, `createdAt` |
+| `matchresults` | `MatchResult` | Submitted scores for verification / history | `bookingId` -> `bookings` | `bookingId`, `team` |
+| `notifications` | `Notification` | In-app team notifications | `challengeId` -> `challenges`, `bookingId` -> `bookings` | `team`, `createdAt` |
+| `teamjoinrequests` | `TeamJoinRequest` | Requests to join a team | `teamId` -> `teams` | `teamUid`, `requesterEmail`, `status` |
+| `pendingregistrations` | `PendingRegistration` | Email records awaiting verification / onboarding | none | `email` |
 
-### 1. **Teams** (`Team`)
-Stores information about futsal teams participating in the platform.
+## Collection Details
+
+### `Team`
+Stores team profile, competitive rating, and profile completion metadata.
 
 ```javascript
 {
   _id: ObjectId,
-  captainName: String (required, unique),
-  email: String (required, unique, lowercase),
+  uid: String,
+  captainName: String,
+  email: String,
   teamName: String,
   district: String,
   location: String,
-  skill: Enum['Beginner', 'Intermediate', 'Advanced'],
-  teamProfileCompleted: Boolean (default: false),
-  locationVerified: Boolean (default: false),
-  skillLocked: Boolean (default: false),
-  locationLocked: Boolean (default: false),
+  skill: Enum['Beginner', 'Intermediate', 'Advanced', ''],
+  teamProfileCompleted: Boolean,
+  locationVerified: Boolean,
+  skillLocked: Boolean,
+  locationLocked: Boolean,
   profileCompletedAt: Date,
-  preferredDay: Enum['Monday'-'Sunday'],
+  preferredDay: Enum['Monday'..'Sunday', ''],
   preferredTime: String,
-  lat: Number (latitude),
-  lng: Number (longitude),
-  eloRating: Number (default: 1000, min: 100, max: 3000),
-  eloMatchesPlayed: Number (default: 0),
-  matchesWon: Number (default: 0),
-  matchesLost: Number (default: 0),
-  currentStreak: Number (default: 0),
+  lat: Number,
+  lng: Number,
+  eloRating: Number,
+  eloMatchesPlayed: Number,
+  matchesWon: Number,
+  matchesLost: Number,
+  currentStreak: Number,
   createdAt: Date,
   updatedAt: Date
 }
 ```
 
-**API Endpoints:**
-- `POST /api/teams/register` - Register a new team
-- `GET /api/teams/email/:email` - Get team by email
-
----
-
-### 2. **Bookings** (`Booking`)
-Tracks futsal court bookings made by teams.
+### `User`
+Stores authentication identity and embeds the role-specific profile summary.
 
 ```javascript
 {
   _id: ObjectId,
-  team: String (required, team name),
-  teamEmail: String,
-  venueId: ObjectId (reference to Venue),
-  venue: String (required),
-  ownerName: String,
-  ownerEmail: String,
-  date: String (required, format: YYYY-MM-DD),
-  time: String (required, format: HH:MM AM/PM),
-  status: Enum['confirmed', 'pending', 'cancelled'] (default: 'pending'),
-  players: Number (required, min: 1),
-  amount: String (e.g., 'Rs. 1,200'),
-  opponent: String (opponent team name, if from challenge),
-  challengeId: ObjectId (reference to Challenge, if applicable),
-  note: String,
-  createdAt: Date,
-  updatedAt: Date
-}
-```
-
-**API Endpoints:**
-- `GET /api/bookings` - Get all bookings
-- `GET /api/bookings/team/:teamName` - Get bookings for a specific team
-- `GET /api/bookings/owner?ownerEmail=...` - Get bookings for a venue owner
-- `POST /api/bookings` - Create new booking
-- `POST /api/bookings/:id/confirm` - Confirm booking (owner-scoped, auto-cancels conflicting pending slots)
-- `POST /api/bookings/:id/cancel` - Cancel booking (owner-scoped)
-- `PATCH /api/bookings/:id` - Update booking
-- `DELETE /api/bookings/:id` - Cancel booking
-
----
-
-### 3. **Challenges** (`Challenge`)
-Manages match challenges between teams.
-
-```javascript
-{
-  _id: ObjectId,
-  from: String (required, sending team name),
-  to: String (required, receiving team name),
-  date: String (required, format: YYYY-MM-DD),
-  time: String (required, format: HH:MM AM/PM),
-  venue: String (required),
-  status: Enum['pending', 'accepted', 'declined', 'cancelled'] (default: 'pending'),
-  note: String,
-  acceptedAt: Date (when challenge was accepted),
-  sentAt: Date (when challenge was sent),
-  createdAt: Date,
-  updatedAt: Date
-}
-```
-
-**API Endpoints:**
-- `GET /api/challenges` - Get all challenges
-- `GET /api/challenges/team/:teamName` - Get challenges for a specific team
-- `POST /api/challenges` - Create new challenge
-- `PATCH /api/challenges/:id` - Update challenge status
-
----
-
-### 4. **Matches** (`Match`)
-Stores match results and historical match data.
-
-```javascript
-{
-  _id: ObjectId,
-  bookingId: ObjectId (ref: Booking, required),
-  team: String (required, team that is playing),
-  opponent: String (required, opponent team name),
-  venue: String (required),
-  date: String (required, format: YYYY-MM-DD),
-  time: String (required, format: HH:MM AM/PM),
-  myScore: Number (required, min: 0),
-  opponentScore: Number (required, min: 0),
-  result: Enum['win', 'loss', 'draw'] (required),
-  note: String,
-  createdAt: Date,
-  updatedAt: Date
-}
-```
-
-**API Endpoints:**
-- `GET /api/matches` - Get all match results
-- `GET /api/matches/team/:teamName` - Get matches for a specific team
-- `POST /api/matches` - Record a match result
-
----
-
-### 5. **MatchResults** (`MatchResult`)
-Captures submitted match scores for verification.
-
-```javascript
-{
-  _id: ObjectId,
-  bookingId: ObjectId (ref: Booking, required),
-  team: String (required, team submitting score),
-  opponent: String (required),
-  myScore: Number (required, min: 0, max: 100),
-  opponentScore: Number (required, min: 0, max: 100),
-  matchDate: String (format: YYYY-MM-DD),
-  matchTime: String (format: HH:MM AM/PM),
-  venue: String (required),
-  submittedBy: String (captain name),
-  verified: Boolean (default: false),
-  verifiedByOpponent: Boolean (default: false),
-  timestamp: Date (when was score submitted),
-  createdAt: Date,
-  updatedAt: Date
-}
-```
-
-**API Endpoints:**
-- `POST /api/match-results` - Submit match score
-- `GET /api/match-results/booking/:bookingId` - Get results for a specific booking
-
----
-
-### 6. **Notifications** (`Notification`)
-Tracks in-app notifications for teams.
-
-```javascript
-{
-  _id: ObjectId,
-  team: String (required, receiving team),
-  text: String (required, notification message),
-  time: String (default: 'just now'),
-  unread: Boolean (default: true),
-  type: Enum['challenge-request', 'match-update', 'score-submission', 'general'] (default: 'general'),
-  challengeId: ObjectId (ref: Challenge, optional),
-  bookingId: ObjectId (ref: Booking, optional),
-  createdAt: Date (when notification was created)
-}
-```
-
-**API Endpoints:**
-- `GET /api/notifications/team/:teamName` - Get notifications for a team
-- `POST /api/notifications` - Create notification
-- `PATCH /api/notifications/:id` - Mark as read/update notification
-
----
-
-### 7. **Venues** (`Venue`)
-Stores information about futsal court venues.
-
-```javascript
-{
-  _id: ObjectId,
-  name: String (required, unique),
-  location: String (required),
-  rating: Number (required, min: 0, max: 5),
-  price: String (e.g., 'Rs. 1,200/hr'),
-  emoji: String (default: '🏟️'),
-  type: Enum['Indoor', 'Outdoor'] (required),
-  courts: Number (required, min: 1),
-  pricePerHour: Number (required, min: 0),
-  lat: Number (latitude),
-  lng: Number (longitude),
-  operatingHours: {
-    open: String (format: HH:MM, default: '06:00'),
-    close: String (format: HH:MM, default: '22:00')
-  },
-  owner: String (venue owner name),
-  contactPhone: String,
-  amenities: [String] (e.g., ['WiFi', 'Parking', 'Seating']),
-  availability: {
-    monday: Boolean (default: true),
-    tuesday: Boolean (default: true),
-    wednesday: Boolean (default: true),
-    thursday: Boolean (default: true),
-    friday: Boolean (default: true),
-    saturday: Boolean (default: true),
-    sunday: Boolean (default: true)
-  },
-  createdAt: Date,
-  updatedAt: Date
-}
-```
-
-**API Endpoints:**
-- `GET /api/venues` - Get all venues (sorted by rating)
-- `POST /api/venues` - Add new venue
-- `PATCH /api/venues/:id` - Update venue details
-
----
-
-### 8. **Users** (`User`)
-Manages user authentication and profiles (for team captains, owners, admins).
-
-```javascript
-{
-  _id: ObjectId,
-  name: String (required),
-  email: String (required, unique, lowercase),
-  password: String (required, should be hashed),
-  role: Enum['team', 'owner', 'admin'] (required),
+  name: String,
+  email: String,
+  password: String,
+  role: Enum['team', 'owner', 'admin'],
   teamInfo: {
-    teamId: ObjectId (ref: Team),
+    teamId: ObjectId,
     teamName: String,
     captainName: String
   },
-  status: Enum['active', 'inactive', 'suspended'] (default: 'active'),
-  profileCompleted: Boolean (default: false),
+  teamAccess: Enum['full', 'basic'],
+  isCaptain: Boolean,
+  ownerProfile: {
+    venueName: String,
+    location: String,
+    district: String,
+    lat: Number,
+    lng: Number,
+    courts: Number,
+    phone: String,
+    hours: String,
+    operatingHours: {
+      open: String,
+      close: String
+    },
+    pricing: {
+      weekdayDay: Number,
+      weekdayEvening: Number,
+      weekend: Number
+    },
+    locationVerified: Boolean
+  },
+  status: Enum['active', 'inactive', 'suspended'],
+  profileCompleted: Boolean,
   lastLogin: Date,
-  verified: Boolean (default: false),
+  verified: Boolean,
   verificationToken: String,
+  otp: {
+    codeHash: String,
+    expiresAt: Date,
+    attempts: Number
+  },
   createdAt: Date,
   updatedAt: Date
 }
 ```
+
+### `Venue`
+Stores futsal venue metadata, operating hours, and pricing plans.
+
+```javascript
+{
+  _id: ObjectId,
+  uid: String,
+  name: String,
+  location: String,
+  rating: Number,
+  price: String,
+  emoji: String,
+  type: Enum['Indoor', 'Outdoor'],
+  courts: Number,
+  pricePerHour: Number,
+  pricing: {
+    weekdayDay: Number,
+    weekdayEvening: Number,
+    weekend: Number,
+    eveningStart: String
+  },
+  lat: Number,
+  lng: Number,
+  operatingHours: {
+    open: String,
+    close: String
+  },
+  owner: String,
+  ownerEmail: String,
+  contactPhone: String,
+  amenities: [String],
+  availability: {
+    monday: Boolean,
+    tuesday: Boolean,
+    wednesday: Boolean,
+    thursday: Boolean,
+    friday: Boolean,
+    saturday: Boolean,
+    sunday: Boolean
+  },
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### `Booking`
+Tracks court reservations, confirmation state, and booking owner metadata.
+
+```javascript
+{
+  _id: ObjectId,
+  team: String,
+  teamEmail: String,
+  venueId: ObjectId,
+  venue: String,
+  ownerName: String,
+  ownerEmail: String,
+  date: String,
+  time: String,
+  status: Enum['confirmed', 'pending', 'cancelled'],
+  players: Number,
+  amount: String,
+  opponent: String,
+  challengeId: ObjectId,
+  source: String,
+  postId: String,
+  note: String,
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### `Challenge`
+Represents a challenge sent from one team to another.
+
+```javascript
+{
+  _id: ObjectId,
+  from: String,
+  to: String,
+  date: String,
+  time: String,
+  venue: String,
+  status: Enum['pending', 'accepted', 'declined', 'cancelled'],
+  note: String,
+  acceptedAt: Date,
+  sentAt: Date,
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### `Match`
+Stores historical match results tied to bookings.
+
+```javascript
+{
+  _id: ObjectId,
+  bookingId: ObjectId,
+  team: String,
+  opponent: String,
+  venue: String,
+  date: String,
+  time: String,
+  myScore: Number,
+  opponentScore: Number,
+  result: Enum['win', 'loss', 'draw'],
+  note: String,
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### `MatchResult`
+Stores submitted scores and verification metadata before or alongside match history.
+
+```javascript
+{
+  _id: ObjectId,
+  bookingId: ObjectId,
+  team: String,
+  opponent: String,
+  myScore: Number,
+  opponentScore: Number,
+  matchDate: String,
+  matchTime: String,
+  venue: String,
+  submittedBy: String,
+  verified: Boolean,
+  verifiedByOpponent: Boolean,
+  timestamp: Date,
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### `Notification`
+Tracks in-app notifications shown in the team topbar.
+
+```javascript
+{
+  _id: ObjectId,
+  team: String,
+  text: String,
+  time: String,
+  unread: Boolean,
+  type: Enum['challenge-request', 'join-request', 'match-update', 'score-submission', 'general'],
+  challengeId: ObjectId,
+  bookingId: ObjectId,
+  joinRequestId: ObjectId,
+  joinRequestStatus: Enum['pending', 'approved', 'declined', 'left', ''],
+  requesterName: String,
+  requesterEmail: String,
+  teamUid: String,
+  createdAt: Date
+}
+```
+
+### `TeamJoinRequest`
+Tracks requests from players to join a team and their review status.
+
+```javascript
+{
+  _id: ObjectId,
+  teamId: ObjectId,
+  teamUid: String,
+  teamName: String,
+  captainName: String,
+  captainEmail: String,
+  requesterName: String,
+  requesterEmail: String,
+  message: String,
+  status: Enum['pending', 'approved', 'declined', 'left'],
+  reviewedAt: Date,
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### `PendingRegistration`
+Stores users who started registration but have not fully completed onboarding.
+
+```javascript
+{
+  _id: ObjectId,
+  email: String,
+  captainName: String,
+  role: String,
+  createdAt: Date
+}
+```
+
+## Notes
+
+- The Mongoose models are the source of truth for the actual collection structure.
+- MongoDB collections are created automatically when the application first writes to them.
+- For best consistency, keep `User.teamInfo.teamId` synchronized with `Team._id` and use `Team.uid` / `Venue.uid` for public-facing identifiers.
 
 **API Endpoints:**
 - `POST /api/users/register` - Register new user

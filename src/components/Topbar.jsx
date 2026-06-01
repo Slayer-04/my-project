@@ -10,8 +10,14 @@ export default function Topbar({ title, breadcrumb }) {
   const [open, setOpen] = useState(false)
   const [showAllNotifications, setShowAllNotifications] = useState(false)
   const myTeamName = user?.teamInfo?.name || user?.teamInfo?.teamName || user?.teamInfo?.captainName || user?.name || user?.teamName || ''
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
   const isUnreadNotification = (notification) => notification?.unread !== false && notification?.status !== 'read'
+
+  const isRecentNotification = (notification) => {
+    const createdAt = new Date(notification?.createdAt || 0).getTime()
+    return Number.isFinite(createdAt) && createdAt >= Date.now() - ONE_DAY_MS
+  }
 
   const resolveId = (value) => {
     if (!value) return ''
@@ -45,10 +51,13 @@ export default function Topbar({ title, breadcrumb }) {
     })
   }
 
-  const visibleNotifications = dedupeNotifications(notifications).map(notification => ({
-    ...notification,
-    unread: isUnreadNotification(notification),
-  }))
+  const visibleNotifications = dedupeNotifications(notifications)
+    .filter(isRecentNotification)
+    .map(notification => ({
+      ...notification,
+      unread: isUnreadNotification(notification),
+    }))
+    .sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime())
     .filter(n => {
       if (n.team && n.team !== myTeamName) return false
 

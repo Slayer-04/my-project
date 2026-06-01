@@ -72,6 +72,57 @@ function TeamFeatureGuard({ children }) {
 
 export default function App() {
   const [user, setUser] = useState(null)
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000
+
+  const parseScheduledDateTime = (post) => {
+    const dateText = String(post?.date || '').trim()
+    if (!dateText) return null
+
+    const scheduledDate = new Date(dateText)
+    if (Number.isNaN(scheduledDate.getTime())) return null
+
+    const timeText = String(post?.time || '').trim()
+    const timeMatch = timeText.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i)
+    if (timeMatch) {
+      let hours = Number(timeMatch[1])
+      const minutes = Number(timeMatch[2])
+      const meridiem = timeMatch[3]?.toUpperCase()
+
+      if (meridiem === 'PM' && hours !== 12) hours += 12
+      if (meridiem === 'AM' && hours === 12) hours = 0
+
+      scheduledDate.setHours(hours, minutes, 0, 0)
+    } else {
+      scheduledDate.setHours(23, 59, 59, 999)
+    }
+
+    return scheduledDate
+  }
+
+  const isActiveMatchPost = (post) => {
+    const scheduledDate = parseScheduledDateTime(post)
+    if (!scheduledDate) return true
+    return scheduledDate.getTime() >= Date.now()
+  }
+
+  const normalizeNotifications = (items) => {
+    if (!Array.isArray(items)) return []
+
+    const cutoffTime = Date.now() - ONE_DAY_MS
+
+    return items
+      .filter(notification => {
+        const createdAt = new Date(notification?.createdAt || 0).getTime()
+        return Number.isFinite(createdAt) && createdAt >= cutoffTime
+      })
+      .sort((left, right) => {
+        const leftTime = new Date(left?.createdAt || 0).getTime()
+        const rightTime = new Date(right?.createdAt || 0).getTime()
+
+        return rightTime - leftTime
+      })
+  }
+
   const [bookings, setBookings] = useState(() => {
     try {
       const stored = localStorage.getItem('fotmatch-bookings')
@@ -91,7 +142,7 @@ export default function App() {
   const [notifications, setNotifications] = useState(() => {
     try {
       const stored = localStorage.getItem('fotmatch-notifications')
-      return stored ? JSON.parse(stored) : []
+      return normalizeNotifications(stored ? JSON.parse(stored) : [])
     } catch (_error) {
       return []
     }
@@ -107,7 +158,8 @@ export default function App() {
   const [matchPosts, setMatchPosts] = useState(() => {
     try {
       const stored = localStorage.getItem('fotmatch-match-posts')
-      return stored ? JSON.parse(stored) : []
+      const parsed = stored ? JSON.parse(stored) : []
+      return Array.isArray(parsed) ? parsed.filter(isActiveMatchPost) : []
     } catch (_error) {
       return []
     }
@@ -150,14 +202,15 @@ export default function App() {
       const resolvedNotifications = typeof nextNotifications === 'function'
         ? nextNotifications(prev)
         : nextNotifications
+      const normalizedNotifications = normalizeNotifications(resolvedNotifications)
 
       try {
-        localStorage.setItem('fotmatch-notifications', JSON.stringify(resolvedNotifications))
+        localStorage.setItem('fotmatch-notifications', JSON.stringify(normalizedNotifications))
       } catch (_error) {
         // Ignore storage failures and keep the in-memory state.
       }
 
-      return resolvedNotifications
+      return normalizedNotifications
     })
   }
 
@@ -182,14 +235,15 @@ export default function App() {
       const resolvedPosts = typeof nextPosts === 'function'
         ? nextPosts(prev)
         : nextPosts
+      const activePosts = Array.isArray(resolvedPosts) ? resolvedPosts.filter(isActiveMatchPost) : []
 
       try {
-        localStorage.setItem('fotmatch-match-posts', JSON.stringify(resolvedPosts))
+        localStorage.setItem('fotmatch-match-posts', JSON.stringify(activePosts))
       } catch (_error) {
         // Ignore storage failures and keep the in-memory state.
       }
 
-      return resolvedPosts
+      return activePosts
     })
   }
 

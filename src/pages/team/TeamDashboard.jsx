@@ -15,7 +15,7 @@ const mapBookingFromApi = booking => ({
 })
 
 export default function TeamDashboard() {
-  const { user, bookings, setBookings, matchResults, setMatchResults, matchPosts } = useAuth()
+  const { user, setUser, bookings, setBookings, matchResults, setMatchResults, matchPosts } = useAuth()
   const navigate = useNavigate()
   const [scoreModalOpen, setScoreModalOpen] = useState(false)
   const [selectedMatch, setSelectedMatch] = useState(null)
@@ -197,9 +197,45 @@ export default function TeamDashboard() {
   }, [finishedMatchesNeedingScores, selectedMatch])
 
   const handleScoreSubmit = async (scoreData) => {
-    setMatchResults(prev => [...prev, scoreData])
-    setScoreModalOpen(false)
-    setSelectedMatch(null)
+    try {
+      const response = await fetch(`${API_BASE}/match-results`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...scoreData,
+          submittedBy: user?.name || myTeamName,
+        }),
+      })
+
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to submit match result.')
+      }
+
+      const savedResult = data.result || scoreData
+      setMatchResults(prev => [...prev, savedResult])
+
+      if (data.updatedTeam && user) {
+        setUser(prev => {
+          if (!prev) return prev
+
+          return {
+            ...prev,
+            eloRating: data.updatedTeam.eloRating ?? prev.eloRating,
+            eloMatchesPlayed: data.updatedTeam.eloMatchesPlayed ?? prev.eloMatchesPlayed,
+            teamInfo: {
+              ...prev.teamInfo,
+              currentElo: data.updatedTeam.eloRating ?? prev.teamInfo?.currentElo,
+            },
+          }
+        })
+      }
+
+      setScoreModalOpen(false)
+      setSelectedMatch(null)
+    } catch (_error) {
+      alert('Unable to submit match result right now. Please try again.')
+    }
   }
 
   const bookingSortValue = (booking) => {
