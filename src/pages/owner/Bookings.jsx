@@ -377,7 +377,10 @@ export default function Bookings() {
                 </thead>
                 <tbody>
                   {filtered.map(b => (
-                    <tr key={b.id}>
+                    <tr
+                      key={b.id}
+                      style={b.status === 'pending' ? { backgroundColor: '#fff8db' } : undefined}
+                    >
                       <td style={{ color:'#8a96a8', fontWeight:700 }}>#{b.id}</td>
                       <td style={{ fontWeight:700 }}>{b.team}</td>
                       <td style={{ fontSize:13 }}>{b.venue}</td>

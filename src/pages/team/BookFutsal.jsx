@@ -12,6 +12,8 @@ const mapBookingFromApi = booking => ({
   ...booking,
   id: booking.id || booking._id,
   venue: booking.venueId?.name || booking.venue,
+  date: booking.date ? booking.date.toString().split('T')[0] : booking.date,
+  time: booking.time ? minutesToTimeLabel(parseTimeToMinutes(booking.time) ?? 0) : booking.time,
 })
 
 const parseTimeToMinutes = (timeValue) => {
@@ -48,6 +50,20 @@ const minutesToTimeLabel = (minutes) => {
   const suffix = hour24 >= 12 ? 'PM' : 'AM'
   const displayHour = hour24 % 12 === 0 ? 12 : hour24 % 12
   return `${String(displayHour).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${suffix}`
+}
+
+const normalizeDateId = value => {
+  if (!value) return ''
+  const text = String(value).trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text
+  const parsed = new Date(text)
+  if (Number.isNaN(parsed.getTime())) return text
+  return parsed.toISOString().split('T')[0]
+}
+
+const normalizeSlotTime = value => {
+  const minutes = parseTimeToMinutes(value)
+  return minutes === null ? String(value || '').trim() : minutesToTimeLabel(minutes)
 }
 
 const toRupees = (value) => `Rs. ${Number(value || 0).toLocaleString('en-IN')}`
@@ -88,7 +104,7 @@ const mapVenueFromApi = (venue, index) => ({
 
 export default function BookFutsal() {
   const { user, bookings, setBookings, notifications, setNotifications } = useAuth()
-  const [venueList, setVenueList] = useState(() => (Array.isArray(mockVenues) ? mockVenues.map(mapVenueFromApi) : []))
+  const [venueList, setVenueList] = useState(() => [])
   const [q,    setQ]   = useState('')
   const [type, setType]= useState('All')
   const [toast,setToast]= useState('')
@@ -101,21 +117,16 @@ export default function BookFutsal() {
   useEffect(() => {
     let active = true
 
-    const seedVenues = Array.isArray(mockVenues) ? mockVenues.map(mapVenueFromApi) : []
+    const seedVenues = []
 
     const mergeVenueLists = (liveVenues) => {
-      const combined = [...seedVenues, ...(Array.isArray(liveVenues) ? liveVenues : [])]
+      const combined = Array.isArray(liveVenues) ? liveVenues : []
       const uniqueByVenue = [...new Map(combined.map(venue => [
         `${String(venue.name || '').toLowerCase()}|${String(venue.location || '').toLowerCase()}`,
         venue,
       ])).values()]
 
       return uniqueByVenue.sort((left, right) => {
-        const leftIsSeed = seedVenues.some(seed => seed.name === left.name && seed.location === left.location)
-        const rightIsSeed = seedVenues.some(seed => seed.name === right.name && seed.location === right.location)
-
-        if (leftIsSeed !== rightIsSeed) return leftIsSeed ? 1 : -1
-
         const leftCreated = new Date(left.createdAt || 0).getTime()
         const rightCreated = new Date(right.createdAt || 0).getTime()
         return rightCreated - leftCreated
@@ -132,10 +143,12 @@ export default function BookFutsal() {
 
         const mappedVenues = data.map(mapVenueFromApi)
         const mergedVenues = mergeVenueLists(mappedVenues)
-        setVenueList(mergedVenues.length > 0 ? mergedVenues : seedVenues)
+        // Do not fall back to seeded venues. Only show venues returned by API (owner-linked).
+        setVenueList(mergedVenues)
       } catch (_error) {
         if (!active) return
-        setVenueList(seedVenues)
+        // On error, show no venues rather than seeded mock venues.
+        setVenueList([])
       }
     }
 
@@ -147,7 +160,11 @@ export default function BookFutsal() {
         const data = await response.json()
         if (!active || !Array.isArray(data)) return
 
-        setBookings(data.map(mapBookingFromApi))
+        // Filter bookings to only include those for venues returned by the API.
+        const mappedBookings = data.map(mapBookingFromApi)
+        const availableVenueNames = new Set(mappedVenues ? mappedVenues.map(v => v.name) : [])
+        const filtered = mappedBookings.filter(b => availableVenueNames.size === 0 ? false : availableVenueNames.has(b.venue))
+        setBookings(filtered)
       } catch (_error) {
         // Keep existing local data when API is unavailable.
       }
@@ -236,9 +253,9 @@ export default function BookFutsal() {
       .filter(booking => (
         booking.status === 'confirmed'
         && booking.venue === bookingVenue.name
-        && booking.date === selectedBookingDate
+        && normalizeDateId(booking.date) === selectedBookingDate
       ))
-      .map(booking => booking.time)
+      .map(booking => normalizeSlotTime(booking.time))
 
     return new Set(bookedTimes)
   }, [bookingVenue, bookings, selectedBookingDate])
@@ -250,9 +267,9 @@ export default function BookFutsal() {
       .filter(booking => (
         booking.status === 'pending'
         && booking.venue === bookingVenue.name
-        && booking.date === selectedBookingDate
+        && normalizeDateId(booking.date) === selectedBookingDate
       ))
-      .map(booking => booking.time)
+      .map(booking => normalizeSlotTime(booking.time))
 
     return new Set(pendingTimes)
   }, [bookingVenue, bookings, selectedBookingDate])

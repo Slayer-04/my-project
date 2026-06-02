@@ -19,8 +19,6 @@ export default function VerifyEmail() {
   const owner = (state && state.owner) || null
 
   const [otp, setOtp] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirm, setConfirm] = useState('')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -28,15 +26,11 @@ export default function VerifyEmail() {
     e.preventDefault()
     setErr('')
     if (!otp || otp.length < 4) return setErr('Enter the OTP sent to your email')
-    if (team) {
-      if (!password || password.length < 6) return setErr('Password must be at least 6 characters')
-      if (password !== confirm) return setErr('Passwords do not match')
-    }
+    // Only OTP is required here; password was collected during registration
 
     setLoading(true)
     try {
       const body = { email, otp }
-      if (team) body.password = password
 
       const { response: res, data } = await fetchApiJson('/auth/verify-otp', {
         method: 'POST',
@@ -141,18 +135,7 @@ export default function VerifyEmail() {
             <input type="text" className="form-control" value={otp} onChange={e => setOtp(e.target.value)} placeholder="123456" />
           </div>
 
-          {team && (
-            <>
-              <div className="form-group">
-                <label className="form-label">Password</label>
-                <input type="password" className="form-control" value={password} onChange={e => setPassword(e.target.value)} placeholder="Min 6 characters" />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Confirm Password</label>
-                <input type="password" className="form-control" value={confirm} onChange={e => setConfirm(e.target.value)} placeholder="Repeat password" />
-              </div>
-            </>
-          )}
+          {/* Password collected during registration; only OTP is required here */}
 
           <div style={{ display:'flex', gap:10 }}>
             <button type="submit" className="btn btn-primary" disabled={loading}>{loading ? 'Verifying…' : 'Verify'}</button>

@@ -301,17 +301,6 @@ export default function OwnerProfile() {
                   <div style={{ fontSize:12, color:'#4a5568', marginTop:4 }}>From confirmed bookings</div>
                 </div>
 
-                <div style={{ marginTop:16 }}>
-                  {[
-                    { lbl:'Court Utilisation', pct:72, cls:'hf-green' },
-                    { lbl:'Customer Satisfaction', pct:88, cls:'hf-blue' },
-                  ].map(h => (
-                    <div className="health-row" key={h.lbl}>
-                      <div className="health-lbl"><span>{h.lbl}</span><span>{h.pct}%</span></div>
-                      <div className="health-track"><div className={`health-fill ${h.cls}`} style={{ width:`${h.pct}%` }} /></div>
-                    </div>
-                  ))}
-                </div>
               </div>
             </div>
           </div>

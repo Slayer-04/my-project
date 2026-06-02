@@ -153,7 +153,12 @@ export default function TeamProfile() {
   const goalsAgainst = teamMatchHistory.reduce((sum, match) => sum + match.opponentScore, 0)
   const baseElo = info.baseElo ?? skillBaseElo[info.skill] ?? 1200
   const fallbackElo = baseElo + (wins * 25) + (draws * 10) - (losses * 20)
-  const currentElo = user?.eloRating ?? info.currentElo ?? fallbackElo
+
+  // If the team hasn't played any matches yet, prefer the selected skill's base ELO
+  const hasPlayed = Number(user?.eloMatchesPlayed ?? info.eloMatchesPlayed ?? 0) > 0
+  const currentElo = hasPlayed
+    ? (user?.eloRating ?? info.currentElo ?? fallbackElo)
+    : (info.baseElo ?? skillBaseElo[info.skill] ?? (user?.eloRating ?? fallbackElo))
 
   const handleLocationConfirm = (loc) => {
     setInfo({ ...info, location: loc.address, district: loc.district || '', lat: loc.lat, lng: loc.lng })

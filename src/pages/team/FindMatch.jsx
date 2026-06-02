@@ -8,8 +8,7 @@ import { getApiBaseUrl } from '../../utils/apiConfig.js'
 
 const API_BASE = getApiBaseUrl()
 
-/* Seed open match posts visible to everyone */
-const SEED_POSTS = []
+/* Open match posts are created manually via the UI; no seed posts */
 const POST_COLORS = ['blue', 'teal', 'purple', 'green', 'orange']
 const POST_EMOJIS = ['⚽', '🔥', '🦁', '🦅', '🏆', '⚡', '🥅', '🛡️', '🚀', '🎯']
 const POST_TIMES = ['06:00 AM', '07:00 AM', '08:00 AM', '09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM', '05:00 PM', '06:00 PM', '07:00 PM', '08:00 PM']
@@ -557,7 +556,15 @@ export default function FindMatch() {
         if (!active) return
 
         setTeams(mappedTeams)
-        setMatchPosts(prev => (Array.isArray(prev) && prev.length > 0 ? prev : buildPostsFromTeams(mappedTeams)))
+        // Filter any existing matchPosts to only include teams returned by the API.
+        const teamNames = new Set(mappedTeams.map(t => t.name))
+        // Do NOT auto-create match posts from teams. Only preserve any existing
+        // posts that match teams returned by the API. Posting should be manual
+        // via the "Post Your Team" UI to avoid unexpected automatic posts.
+        setMatchPosts(prev => {
+          const existing = Array.isArray(prev) ? prev.filter(p => teamNames.has(p.team)) : []
+          return existing
+        })
       } catch (_error) {
         if (!active) return
         setTeams(mockTeams)
@@ -606,7 +613,9 @@ export default function FindMatch() {
         const uniqueByLabel = [...new Map(mapped.map(venue => [venue.label.toLowerCase(), venue])).values()]
 
         if (!active) return
-        setVenueOptions(uniqueByLabel.length > 0 ? uniqueByLabel : fallbackVenues)
+        // Do not fall back to seeded mock venues when API returns an empty array.
+        // Show only real venues derived from the backend (owner-linked).
+        setVenueOptions(uniqueByLabel)
       } catch (_error) {
         if (!active) return
         setVenueOptions(fallbackVenues)
@@ -1071,7 +1080,7 @@ export default function FindMatch() {
                 <div className="empty-state" style={{ margin:0 }}>
                   <i className="fas fa-robot" />
                   <h3>No recommendations yet</h3>
-                  <p>As more team activity data arrives, this section will auto-populate.</p>
+                  <p>This section shows algorithmic recommendations based on existing manual posts.</p>
                 </div>
               ) : (
                 <div className="team-grid">
@@ -1159,7 +1168,7 @@ export default function FindMatch() {
             <div className="empty-state">
               <i className="fas fa-clipboard-list" />
               <h3>No open matches</h3>
-              <p>Be the first - post your team above!</p>
+              <p>Create a post using the "Post Your Team" button — automatic posts are disabled.</p>
             </div>
           ) : (
             <div style={{ display:'flex', flexDirection:'column', gap:14 }}>

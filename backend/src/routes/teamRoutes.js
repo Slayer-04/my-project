@@ -110,7 +110,12 @@ router.get('/', async (req, res) => {
     const random = String(req.query.random || '').toLowerCase() === 'true'
 
     if (random && Number.isFinite(limit) && limit > 0) {
-      const pipeline = [{ $match: query }, { $sample: { size: limit } }]
+      const pipeline = [
+        { $match: query },
+        { $lookup: { from: 'users', localField: 'email', foreignField: 'email', as: 'user' } },
+        { $match: { $expr: { $gt: [{ $size: '$user' }, 0] } } },
+        { $sample: { size: limit } },
+      ]
       const allTeams = await Team.aggregate(pipeline)
       return res.json(allTeams.map(team => ({
         ...team,
@@ -120,13 +125,25 @@ router.get('/', async (req, res) => {
       })))
     }
 
-    let teamsQuery = Team.find(query).sort({ createdAt: -1 })
+    // Default listing: only include teams that have a linked User record (real users)
+    const agg = [
+      { $match: query },
+      { $lookup: { from: 'users', localField: 'email', foreignField: 'email', as: 'user' } },
+      { $match: { $expr: { $gt: [{ $size: '$user' }, 0] } } },
+      { $sort: { createdAt: -1 } },
+    ]
+
     if (Number.isFinite(limit) && limit > 0) {
-      teamsQuery = teamsQuery.limit(limit)
+      agg.push({ $limit: limit })
     }
 
-    const allTeams = await teamsQuery
-    return res.json(allTeams.map(serializeTeam))
+    const allTeams = await Team.aggregate(agg)
+    return res.json(allTeams.map(t => ({
+      ...t,
+      teamName: norm(t.teamName) || norm(t.captainName),
+      location: norm(t.location),
+      district: deriveDistrict(t.location, t.district),
+    })))
   } catch (error) {
     return res.status(500).json({ message: 'Failed to fetch teams.', error: error.message })
   }
@@ -227,6 +244,13 @@ router.patch('/:id/complete-profile', async (req, res) => {
     team.skillLocked = true
     team.locationLocked = true
     team.profileCompletedAt = new Date()
+
+    // Set initial ELO based on declared skill level if no matches played yet.
+    const SKILL_BASE = { Beginner: 1000, Intermediate: 1200, Advanced: 1400 }
+    if (!team.eloMatchesPlayed || Number(team.eloMatchesPlayed) === 0) {
+      const base = SKILL_BASE[skill] ?? Number(team.eloRating ?? 1000)
+      team.eloRating = Number(base)
+    }
 
     await team.save()
 

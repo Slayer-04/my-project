@@ -159,7 +159,12 @@ export default function App() {
     try {
       const stored = localStorage.getItem('fotmatch-match-posts')
       const parsed = stored ? JSON.parse(stored) : []
-      return Array.isArray(parsed) ? parsed.filter(isActiveMatchPost) : []
+      // Filter out any auto-generated posts from previous app versions.
+      // Auto-generated IDs used to be prefixed with "post-" (e.g. "post-<id>").
+      const manualOnly = Array.isArray(parsed)
+        ? parsed.filter(p => !(typeof p?.id === 'string' && p.id.startsWith('post-')))
+        : []
+      return Array.isArray(manualOnly) ? manualOnly.filter(isActiveMatchPost) : []
     } catch (_error) {
       return []
     }

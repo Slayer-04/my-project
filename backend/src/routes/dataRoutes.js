@@ -325,31 +325,17 @@ router.post('/bookings', async (req, res) => {
       ? formatRupees(resolveBookingAmount(linkedVenue, normalizedDate, normalizedTime))
       : norm(amount) || 'Rs. 1,200'
 
-    const confirmedConflict = await Booking.findOne({
+    const activeConflict = await Booking.findOne({
       ...(resolvedVenueId
         ? { venueId: resolvedVenueId }
         : { venue: resolvedVenueName }),
       date: normalizedDate,
       time: normalizedTime,
-      status: 'confirmed',
+      status: { $in: ['pending', 'confirmed'] },
     })
 
-    if (confirmedConflict) {
-      return res.status(409).json({ message: 'This slot is already confirmed for this venue.' })
-    }
-
-    const pendingDuplicate = await Booking.findOne({
-      ...(resolvedVenueId
-        ? { venueId: resolvedVenueId }
-        : { venue: resolvedVenueName }),
-      date: normalizedDate,
-      time: normalizedTime,
-      team: normalizedTeam,
-      status: 'pending',
-    })
-
-    if (pendingDuplicate) {
-      return res.status(409).json({ message: 'You already have a pending booking for this slot.' })
+    if (activeConflict) {
+      return res.status(409).json({ message: 'This slot is already booked or pending for this venue.' })
     }
 
     const booking = await Booking.create({
@@ -579,50 +565,6 @@ router.post('/challenges', async (req, res) => {
   }
 })
 
-router.patch('/challenges/:id', async (req, res) => {
-  try {
-    const challenge = await Challenge.findByIdAndUpdate(
-      req.params.id,
-      { $set: req.body, acceptedAt: req.body.status === 'accepted' ? new Date() : undefined },
-      { new: true, runValidators: true }
-    )
-
-    if (!challenge) {
-      return res.status(404).json({ message: 'Challenge not found.' })
-    }
-
-    return res.json({ message: 'Challenge updated successfully.', challenge })
-  } catch (error) {
-    return res.status(500).json({ message: 'Failed to update challenge.', error: error.message })
-  }
-})
-
-/* ────────────────────────────────────────────────────────────────── */
-/* MATCHES (RESULTS) ROUTES                                           */
-/* ────────────────────────────────────────────────────────────────── */
-
-router.get('/matches', async (_req, res) => {
-  try {
-    const matches = await Match.find({})
-      .populate('bookingId')
-      .sort({ createdAt: -1 })
-    return res.json(matches)
-  } catch (error) {
-    return res.status(500).json({ message: 'Failed to fetch matches.', error: error.message })
-  }
-})
-
-router.get('/matches/team/:teamName', async (req, res) => {
-  try {
-    const matches = await Match.find({ team: req.params.teamName })
-      .populate('bookingId')
-      .sort({ createdAt: -1 })
-    return res.json(matches)
-  } catch (error) {
-    return res.status(500).json({ message: 'Failed to fetch team matches.', error: error.message })
-  }
-})
-
 router.post('/matches', async (req, res) => {
   try {
     const { bookingId, team, opponent, venue, date, time, myScore, opponentScore, note } = req.body
@@ -683,166 +625,35 @@ router.get('/notifications/team/:teamName', async (req, res) => {
 router.post('/notifications', async (req, res) => {
   try {
     const { team, text, type, challengeId, bookingId } = req.body
-    if (!bookingId || !team || !opponent || myScore === undefined || opponentScore === undefined) {
     if (!team || !text) {
       return res.status(400).json({ message: 'team and text are required.' })
     }
 
-    const submittedTeamName = norm(team)
-    const opponentTeamName = norm(opponent)
-    const myScoreNum = Number(myScore)
-    const opponentScoreNum = Number(opponentScore)
-
-    let matchOutcome = 'draw'
-    if (myScoreNum > opponentScoreNum) matchOutcome = 'win'
-    else if (myScoreNum < opponentScoreNum) matchOutcome = 'loss'
-
-    const [submittingTeam, opponentTeam] = await Promise.all([
-      findTeamByAlias(submittedTeamName),
-      findTeamByAlias(opponentTeamName),
-    ])
-
-    const submittingTeamRating = Number(submittingTeam?.eloRating ?? 1000)
-    const opponentTeamRating = Number(opponentTeam?.eloRating ?? 1000)
-    const submittingScore = matchOutcome === 'win' ? 1 : matchOutcome === 'loss' ? 0 : 0.5
-    const opponentScoreForElo = 1 - submittingScore
-
-    if (submittingTeam) {
-      submittingTeam.eloRating = calculateNewRating(submittingTeamRating, opponentTeamRating, submittingScore)
-      submittingTeam.eloMatchesPlayed = Number(submittingTeam.eloMatchesPlayed ?? 0) + 1
-      submittingTeam.matchesWon = Number(submittingTeam.matchesWon ?? 0) + (matchOutcome === 'win' ? 1 : 0)
-      submittingTeam.matchesLost = Number(submittingTeam.matchesLost ?? 0) + (matchOutcome === 'loss' ? 1 : 0)
-      submittingTeam.currentStreak = matchOutcome === 'win'
-        ? Math.max(0, Number(submittingTeam.currentStreak ?? 0)) + 1
-        : matchOutcome === 'loss'
-          ? Math.min(0, Number(submittingTeam.currentStreak ?? 0)) - 1
-          : 0
-    }
-
-    if (opponentTeam) {
-      opponentTeam.eloRating = calculateNewRating(opponentTeamRating, submittingTeamRating, opponentScoreForElo)
-      opponentTeam.eloMatchesPlayed = Number(opponentTeam.eloMatchesPlayed ?? 0) + 1
-      opponentTeam.matchesWon = Number(opponentTeam.matchesWon ?? 0) + (matchOutcome === 'loss' ? 1 : 0)
-      opponentTeam.matchesLost = Number(opponentTeam.matchesLost ?? 0) + (matchOutcome === 'win' ? 1 : 0)
-      opponentTeam.currentStreak = matchOutcome === 'loss'
-        ? Math.max(0, Number(opponentTeam.currentStreak ?? 0)) + 1
-        : matchOutcome === 'win'
-          ? Math.min(0, Number(opponentTeam.currentStreak ?? 0)) - 1
-          : 0
-    }
-
-    const saveOperations = []
-    if (submittingTeam) saveOperations.push(submittingTeam.save())
-    if (opponentTeam && opponentTeam !== submittingTeam) saveOperations.push(opponentTeam.save())
-
-    if (saveOperations.length > 0) {
-      await Promise.all(saveOperations)
-    }
-    const submittedTeamName = norm(team)
-    const matchResult = await MatchResult.create({
-    const [submittingTeam, opponentTeam] = await Promise.all([
-      team: submittedTeamName,
-      opponent: opponentTeamName,
-      myScore: myScoreNum,
-      opponentScore: opponentScoreNum,
-    const submittingTeamRating = Number(submittingTeam?.eloRating ?? 1000)
-    const opponentTeamRating = Number(opponentTeam?.eloRating ?? 1000)
-    const submittingScore = result === 'win' ? 1 : result === 'loss' ? 0 : 0.5
-      submittedBy: submittedBy ? submittedBy.trim() : submittedTeamName,
-
-    if (submittingTeam) {
-      submittingTeam.eloRating = calculateNewRating(submittingTeamRating, opponentTeamRating, submittingScore)
-    return res.status(201).json({
-      message: 'Match result submitted successfully.',
-      result: matchResult,
-      updatedTeam: submittingTeam ? {
-        id: submittingTeam._id,
-        teamName: submittingTeam.teamName,
-        captainName: submittingTeam.captainName,
-        eloRating: submittingTeam.eloRating,
-        eloMatchesPlayed: submittingTeam.eloMatchesPlayed,
-        matchesWon: submittingTeam.matchesWon,
-        matchesLost: submittingTeam.matchesLost,
-        currentStreak: submittingTeam.currentStreak,
-      } : null,
-      updatedOpponentTeam: opponentTeam ? {
-        id: opponentTeam._id,
-        teamName: opponentTeam.teamName,
-        captainName: opponentTeam.captainName,
-        eloRating: opponentTeam.eloRating,
-        eloMatchesPlayed: opponentTeam.eloMatchesPlayed,
-        matchesWon: opponentTeam.matchesWon,
-        matchesLost: opponentTeam.matchesLost,
-        currentStreak: opponentTeam.currentStreak,
-      } : null,
-    })
-      submittingTeam.matchesWon = Number(submittingTeam.matchesWon ?? 0) + (result === 'win' ? 1 : 0)
-      submittingTeam.matchesLost = Number(submittingTeam.matchesLost ?? 0) + (result === 'loss' ? 1 : 0)
-      submittingTeam.currentStreak = result === 'win'
-        ? Math.max(0, Number(submittingTeam.currentStreak ?? 0)) + 1
-        : result === 'loss'
-          ? Math.min(0, Number(submittingTeam.currentStreak ?? 0)) - 1
-          : 0
-    }
-
-    if (opponentTeam) {
-      opponentTeam.eloRating = calculateNewRating(opponentTeamRating, submittingTeamRating, opponentScoreForElo)
-      opponentTeam.eloMatchesPlayed = Number(opponentTeam.eloMatchesPlayed ?? 0) + 1
-      opponentTeam.matchesWon = Number(opponentTeam.matchesWon ?? 0) + (result === 'loss' ? 1 : 0)
-      opponentTeam.matchesLost = Number(opponentTeam.matchesLost ?? 0) + (result === 'win' ? 1 : 0)
-      opponentTeam.currentStreak = result === 'loss'
-        ? Math.max(0, Number(opponentTeam.currentStreak ?? 0)) + 1
-        : result === 'win'
-          ? Math.min(0, Number(opponentTeam.currentStreak ?? 0)) - 1
-          : 0
-    }
-
-    const saveOperations = []
-    if (submittingTeam) saveOperations.push(submittingTeam.save())
-    if (opponentTeam && opponentTeam !== submittingTeam) saveOperations.push(opponentTeam.save())
-
-    if (saveOperations.length > 0) {
-      await Promise.all(saveOperations)
-    }
+    const notification = await Notification.create({
+      team: team.trim(),
+      text: text.trim(),
+      type: type || 'info',
+      challengeId: challengeId || null,
+      bookingId: bookingId || null,
       unread: true,
       createdAt: new Date(),
     })
-      team: submittedTeamName,
-      opponent: opponentTeamName,
+
+    return res.status(201).json({
+      message: 'Notification created successfully.',
+      notification,
+    })
   } catch (error) {
     return res.status(500).json({ message: 'Failed to create notification.', error: error.message })
   }
 })
 
-      submittedBy: submittedBy ? submittedBy.trim() : submittedTeamName,
+router.patch('/notifications/:id', async (req, res) => {
   try {
     const notification = await Notification.findByIdAndUpdate(
       req.params.id,
-    return res.status(201).json({
-      message: 'Match result submitted successfully.',
-      result,
-      updatedTeam: submittingTeam ? {
-        id: submittingTeam._id,
-        teamName: submittingTeam.teamName,
-        captainName: submittingTeam.captainName,
-        eloRating: submittingTeam.eloRating,
-        eloMatchesPlayed: submittingTeam.eloMatchesPlayed,
-        matchesWon: submittingTeam.matchesWon,
-        matchesLost: submittingTeam.matchesLost,
-        currentStreak: submittingTeam.currentStreak,
-      } : null,
-      updatedOpponentTeam: opponentTeam ? {
-        id: opponentTeam._id,
-        teamName: opponentTeam.teamName,
-        captainName: opponentTeam.captainName,
-        eloRating: opponentTeam.eloRating,
-        eloMatchesPlayed: opponentTeam.eloMatchesPlayed,
-        matchesWon: opponentTeam.matchesWon,
-        matchesLost: opponentTeam.matchesLost,
-        currentStreak: opponentTeam.currentStreak,
-      } : null,
-    })
-      { new: true }
+      { $set: req.body },
+      { new: true, runValidators: true }
     )
 
     if (!notification) {
@@ -868,10 +679,17 @@ router.get('/venues', async (_req, res) => {
 
     const mergedByKey = new Map()
 
+    // Build a set of owner emails from owner users so we only include venues
+    // that are associated with a real owner account.
+    const ownerEmailSet = new Set(ownerUsers.map(u => String(u.email || '').toLowerCase()))
+
     venues.forEach(venue => {
       const normalized = normalizeVenueRecord(venue)
       const key = `${norm(normalized.name).toLowerCase()}|${norm(normalized.ownerEmail).toLowerCase()}`
-      mergedByKey.set(key, normalized)
+      // Only include seeded venues if they have an ownerEmail that matches an owner user
+      if (ownerEmailSet.has(String(normalized.ownerEmail || '').toLowerCase())) {
+        mergedByKey.set(key, normalized)
+      }
     })
 
     ownerUsers.forEach(user => {
