@@ -41,6 +41,19 @@ function Guard({ role, children }) {
   return children
 }
 
+const hasActiveTeam = user => Boolean(
+  user?.teamProfileCompleted
+  || (
+    (user?.teamAccess === 'basic' || user?.isCaptain === false)
+    && (
+      user?.teamInfo?.teamId
+      || user?.teamInfo?.uid
+      || user?.teamInfo?.teamName
+      || user?.teamName
+    )
+  )
+)
+
 function TeamProfileGuard({ children }) {
   const { user } = useAuth()
   if (!user) return <Navigate to="/login" replace />
@@ -48,9 +61,9 @@ function TeamProfileGuard({ children }) {
   try {
     const seenKey = `fotmatch.seenTeamChoice:${user.id || user.email || ''}`
     const seen = typeof window !== 'undefined' && localStorage.getItem(seenKey)
-    if (!user.teamProfileCompleted && !seen) return <Navigate to="/team/choice" replace />
+    if (!hasActiveTeam(user) && !seen) return <Navigate to="/team/choice" replace />
   } catch (_e) {
-    if (!user.teamProfileCompleted) return <Navigate to="/team/choice" replace />
+    if (!hasActiveTeam(user)) return <Navigate to="/team/choice" replace />
   }
   return children
 }
@@ -62,9 +75,9 @@ function TeamFeatureGuard({ children }) {
   try {
     const seenKey = `fotmatch.seenTeamChoice:${user.id || user.email || ''}`
     const seen = typeof window !== 'undefined' && localStorage.getItem(seenKey)
-    if (!user.teamProfileCompleted && !seen) return <Navigate to="/team/choice" replace />
+    if (!hasActiveTeam(user) && !seen) return <Navigate to="/team/choice" replace />
   } catch (_e) {
-    if (!user.teamProfileCompleted) return <Navigate to="/team/choice" replace />
+    if (!hasActiveTeam(user)) return <Navigate to="/team/choice" replace />
   }
   if (user.teamAccess === 'basic') return <Navigate to="/team" replace />
   return children

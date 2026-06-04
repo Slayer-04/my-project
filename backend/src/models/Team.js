@@ -21,13 +21,6 @@ const TeamSchema = new mongoose.Schema(
     skillLocked: { type: Boolean, default: false },
     locationLocked: { type: Boolean, default: false },
     profileCompletedAt: { type: Date, default: null },
-    preferredDay: {
-      type: String,
-      enum: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday', ''],
-      default: '',
-      trim: true,
-    },
-    preferredTime: { type: String, default: '', trim: true },
     lat: { type: Number, default: null },
     lng: { type: Number, default: null },
     eloRating: { type: Number, default: 1000, min: 100, max: 3000 },

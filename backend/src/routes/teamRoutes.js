@@ -165,8 +165,6 @@ router.get('/:id/recommendations', async (req, res) => {
       myTeam: team,
       teams: allTeams,
       venueCoords,
-      preferredDay: req.query.day,
-      preferredTime: req.query.time,
       preferredVenue: req.query.venue,
       limit: Number(req.query.limit) > 0 ? Number(req.query.limit) : 5,
     })
@@ -174,8 +172,6 @@ router.get('/:id/recommendations', async (req, res) => {
     return res.json({
       teamId: team._id,
       context: {
-        day: req.query.day || null,
-        time: req.query.time || null,
         venue: req.query.venue || null,
       },
       ...result,
@@ -199,7 +195,7 @@ router.get('/:id', async (req, res) => {
 
 router.patch('/:id/complete-profile', async (req, res) => {
   try {
-    const { teamName, location, district, skill, locationVerified, lat, lng, preferredDay, preferredTime } = req.body
+    const { teamName, location, district, skill, locationVerified, lat, lng } = req.body
 
     if (!teamName || !location || !skill) {
       return res.status(400).json({ message: 'teamName, location, and skill are required.' })
@@ -217,11 +213,6 @@ router.patch('/:id/complete-profile', async (req, res) => {
       return res.status(400).json({ message: 'Invalid skill value.' })
     }
 
-    const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    if (typeof preferredDay !== 'undefined' && preferredDay && !allowedDays.includes(preferredDay)) {
-      return res.status(400).json({ message: 'Invalid preferredDay value.' })
-    }
-
     const team = await Team.findById(req.params.id)
     if (!team) {
       return res.status(404).json({ message: 'Team not found.' })
@@ -235,8 +226,6 @@ router.patch('/:id/complete-profile', async (req, res) => {
     team.location = location.trim()
     team.district = deriveDistrict(location, district)
     team.skill = skill
-    team.preferredDay = preferredDay || ''
-    team.preferredTime = preferredTime || ''
     team.lat = lat
     team.lng = lng
     team.locationVerified = true
@@ -246,7 +235,7 @@ router.patch('/:id/complete-profile', async (req, res) => {
     team.profileCompletedAt = new Date()
 
     // Set initial ELO based on declared skill level if no matches played yet.
-    const SKILL_BASE = { Beginner: 1000, Intermediate: 1200, Advanced: 1400 }
+    const SKILL_BASE = { Beginner: 1000, Intermediate: 1500, Advanced: 2000 }
     if (!team.eloMatchesPlayed || Number(team.eloMatchesPlayed) === 0) {
       const base = SKILL_BASE[skill] ?? Number(team.eloRating ?? 1000)
       team.eloRating = Number(base)
@@ -265,11 +254,7 @@ router.patch('/:id/complete-profile', async (req, res) => {
 
 router.patch('/:id', async (req, res) => {
   try {
-    const { teamName, location, district, skill, lat, lng, preferredDay, preferredTime } = req.body
-    const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    if (typeof preferredDay !== 'undefined' && preferredDay && !allowedDays.includes(preferredDay)) {
-      return res.status(400).json({ message: 'Invalid preferredDay value.' })
-    }
+    const { teamName, location, district, skill, lat, lng } = req.body
 
     const team = await Team.findById(req.params.id)
     if (!team) {
@@ -300,14 +285,6 @@ router.patch('/:id', async (req, res) => {
 
     if (typeof district !== 'undefined' && typeof location === 'undefined') {
       team.district = deriveDistrict(team.location, district)
-    }
-
-    if (typeof preferredDay !== 'undefined') {
-      team.preferredDay = String(preferredDay).trim()
-    }
-
-    if (typeof preferredTime !== 'undefined') {
-      team.preferredTime = String(preferredTime).trim()
     }
 
     if (typeof lat === 'number' && typeof lng === 'number') {

@@ -146,8 +146,6 @@ router.get('/member/:email', async (req, res) => {
         skill: team.skill,
         lat: team.lat,
         lng: team.lng,
-        preferredDay: team.preferredDay,
-        preferredTime: team.preferredTime,
         eloRating: team.eloRating,
         teamProfileCompleted: team.teamProfileCompleted,
         captainName: team.captainName,

@@ -77,8 +77,6 @@ export default function JoinTeam() {
             skill: memberData.team.skill || 'Intermediate',
             lat: memberData.team.lat,
             lng: memberData.team.lng,
-            preferredDay: memberData.team.preferredDay || 'Saturday',
-            preferredTime: memberData.team.preferredTime || '06:00 PM',
             currentElo: memberData.team.eloRating,
           },
         })

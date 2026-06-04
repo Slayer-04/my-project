@@ -5,7 +5,7 @@ const Team = require('../src/models/Team')
 
 dotenv.config()
 
-const SKILL_BASE = { Beginner: 1000, Intermediate: 1200, Advanced: 1400 }
+const SKILL_BASE = { Beginner: 1000, Intermediate: 1500, Advanced: 2000 }
 
 async function main() {
   const uri = process.env.MONGODB_URI

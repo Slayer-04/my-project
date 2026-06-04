@@ -14,7 +14,7 @@ const POST_EMOJIS = ['⚽', '🔥', '🦁', '🦅', '🏆', '⚡', '🥅', '🛡
 const POST_TIMES = ['06:00 AM', '07:00 AM', '08:00 AM', '09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM', '05:00 PM', '06:00 PM', '07:00 PM', '08:00 PM']
 const POST_VENUES = ['Arena Futsal Park', 'Champions Court', 'Goal Zone Futsal', 'Patan Sports Hub']
 
-const SKILL_TO_ELO = { Beginner:1400, Intermediate:1600, Advanced:1800 }
+const SKILL_TO_ELO = { Beginner:1000, Intermediate:1500, Advanced:2000 }
 const SKILL_LEVEL = { Beginner: 1, Intermediate: 2, Advanced: 3 }
 const COMPATIBILITY_WEIGHTS = {
   elo: 0.25,
@@ -23,7 +23,7 @@ const COMPATIBILITY_WEIGHTS = {
   extras: 0.1,
 }
 const HARD_FILTERS = {
-  maxEloDiff: 500,
+  maxEloDiff: 400,
   maxDistanceKm: 4,
 }
 const TEAM_AVAILABILITY = {
@@ -33,47 +33,6 @@ const TEAM_AVAILABILITY = {
   'Blue Phoenix': { day:'Friday', slots:['10:00 AM', '04:00 PM'], venues:['Patan Sports Hub'] },
   'Night Owls': { day:'Saturday', slots:['08:00 AM', '06:00 PM'], venues:['Champions Court', 'Patan Sports Hub'] },
   'Storm United': { day:'Sunday', slots:['06:00 AM', '08:00 AM'], venues:['Champions Court'] },
-}
-
-const toDayLabel = (dateValue, defaultDay = 'Saturday') => {
-  if (!dateValue) return defaultDay
-  const date = new Date(dateValue)
-  if (Number.isNaN(date.getTime())) return defaultDay
-  return date.toLocaleDateString('en-US', { weekday:'long' })
-}
-
-const parseTimeToMinutes = (timeValue) => {
-  if (!timeValue) return null
-  const is12Hour = /AM|PM/i.test(timeValue)
-
-  if (is12Hour) {
-    const [timePart, meridiemRaw] = timeValue.trim().split(' ')
-    if (!timePart || !meridiemRaw) return null
-    const [hRaw, mRaw] = timePart.split(':')
-    const meridiem = meridiemRaw.toUpperCase()
-    let hour = Number(hRaw)
-    const minute = Number(mRaw)
-    if (Number.isNaN(hour) || Number.isNaN(minute)) return null
-    if (meridiem === 'PM' && hour !== 12) hour += 12
-    if (meridiem === 'AM' && hour === 12) hour = 0
-    return (hour * 60) + minute
-  }
-
-  const [hRaw, mRaw] = timeValue.split(':')
-  const hour = Number(hRaw)
-  const minute = Number(mRaw)
-  if (Number.isNaN(hour) || Number.isNaN(minute)) return null
-  return (hour * 60) + minute
-}
-
-const getClosestSlotGapHours = (slots, targetMinutes) => {
-  if (!Array.isArray(slots) || slots.length === 0 || targetMinutes === null) return 2
-  const slotMinutes = slots
-    .map(parseTimeToMinutes)
-    .filter(v => v !== null)
-  if (slotMinutes.length === 0) return 2
-  const minGapMinutes = Math.min(...slotMinutes.map(v => Math.abs(v - targetMinutes)))
-  return minGapMinutes / 60
 }
 
 const toRadians = (value) => (value * Math.PI) / 180
@@ -113,9 +72,10 @@ const getDistanceKm = (fromValue, toValue) => {
 }
 
 const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, value))
+const normalizeTeamKey = (value) => String(value || '').trim().toLowerCase()
 
 const getTeamStrength = (team) => {
-  const elo = Number(team?.elo ?? SKILL_TO_ELO[team?.skill] ?? 1600)
+  const elo = Number(team?.elo ?? SKILL_TO_ELO[team?.skill] ?? 1500)
   const wins = Number(team?.wins ?? 0)
   const losses = Number(team?.losses ?? 0)
   const totalMatches = wins + losses
@@ -154,26 +114,18 @@ const getVenueDistanceKm = (team, venueName) => {
   return getDistanceKm(teamCoords, venueCoords)
 }
 
-const getAvailabilityScore = (candidate, context) => {
+const getVenueFitScore = (candidate, context) => {
   const availability = TEAM_AVAILABILITY[candidate.name] || {
-    day:'Sunday',
     slots:['07:00 PM'],
     venues:[candidate.venue || 'Arena Futsal Park'],
   }
 
-  const sameDay = availability.day === context.day
-  const targetMinutes = parseTimeToMinutes(context.time)
-  const slotGapHours = getClosestSlotGapHours(availability.slots, targetMinutes)
   const venueOverlap = (availability.venues || []).includes(context.venue)
 
-  const dayScore = sameDay ? 1 : 0.45
-  const slotScore = clamp(1 - (slotGapHours / 4), 0, 1)
   const venueScore = venueOverlap ? 1 : 0.55
 
   return {
-    score: (dayScore * 0.4) + (slotScore * 0.35) + (venueScore * 0.25),
-    sameDay,
-    slotGapHours,
+    score: venueScore,
     venueOverlap,
     availability,
   }
@@ -264,7 +216,7 @@ const selectSmartVenueByHaversine = (myTeam, allTeams, currentTeamName) => {
       const teamCoords = resolveCoordinates(team)
       if (!teamCoords) return null
       const distanceKm = getDistanceKm(myCoords, teamCoords)
-      const eloGap = Math.abs((myTeam.elo ?? 1600) - (team.elo ?? 1600))
+      const eloGap = Math.abs((myTeam.elo ?? 1500) - (team.elo ?? 1500))
       if (distanceKm === null) return null
       return {
         team,
@@ -318,7 +270,7 @@ const mapBackendTeamToUi = (team, index) => {
     wins,
     losses,
     streak: Number(team.currentStreak ?? team.streak ?? 0),
-    elo: Number(team.eloRating ?? team.elo ?? SKILL_TO_ELO[team.skill] ?? 1600),
+    elo: Number(team.eloRating ?? team.elo ?? SKILL_TO_ELO[team.skill] ?? 1500),
     color: POST_COLORS[index % POST_COLORS.length],
     emoji: POST_EMOJIS[index % POST_EMOJIS.length],
     profileCompleted: typeof team.teamProfileCompleted === 'boolean' ? team.teamProfileCompleted : true,
@@ -397,7 +349,7 @@ export default function FindMatch() {
 
   const myTeam = useMemo(() => ({
     name: currentTeamName,
-    elo: user?.eloRating ?? user?.teamInfo?.eloRating ?? 1600,
+    elo: user?.eloRating ?? user?.teamInfo?.eloRating ?? 1500,
     location: user?.teamInfo?.location || 'Lazimpat',
     lat: user?.teamInfo?.lat ?? 27.7184,
     lng: user?.teamInfo?.lng ?? 85.3235,
@@ -407,11 +359,9 @@ export default function FindMatch() {
     streak: user?.teamInfo?.streak ?? 0,
     profileCompleted: Boolean(user?.teamProfileCompleted),
     locationVerified: Boolean(user?.locationVerified),
-    defaultDay: user?.teamInfo?.preferredDay || 'Saturday',
-    defaultTime: user?.teamInfo?.preferredTime || '06:00 PM',
     preferredVenue: 'Arena Futsal Park',
     winRate: 0.58,
-  }), [currentTeamName, user?.eloRating, user?.locationVerified, user?.skill, user?.teamInfo?.eloRating, user?.teamInfo?.lat, user?.teamInfo?.lng, user?.teamInfo?.location, user?.teamInfo?.losses, user?.teamInfo?.preferredDay, user?.teamInfo?.preferredTime, user?.teamInfo?.skill, user?.teamInfo?.streak, user?.teamInfo?.teamName, user?.teamInfo?.name, user?.teamInfo?.wins, user?.teamName, user?.teamProfileCompleted])
+  }), [currentTeamName, user?.eloRating, user?.locationVerified, user?.skill, user?.teamInfo?.eloRating, user?.teamInfo?.lat, user?.teamInfo?.lng, user?.teamInfo?.location, user?.teamInfo?.losses, user?.teamInfo?.skill, user?.teamInfo?.streak, user?.teamInfo?.teamName, user?.teamInfo?.name, user?.teamInfo?.wins, user?.teamName, user?.teamProfileCompleted])
   const currentTeamLocation = myTeam.location
   const safeMatchPosts = (Array.isArray(matchPosts) ? matchPosts : []).filter(isActiveMatchPost)
 
@@ -447,7 +397,7 @@ export default function FindMatch() {
     return LOCATION_COORDS[venueName] || null
   }
 
-  const getTeamElo = (team) => team.elo ?? SKILL_TO_ELO[team.skill] ?? 1600
+  const getTeamElo = (team) => team.elo ?? SKILL_TO_ELO[team.skill] ?? 1500
 
   const getTeamDistanceMetrics = (team) => {
     const postedVenueCoords = resolveVenueCoords(team.postedVenue || team.venue)
@@ -462,17 +412,7 @@ export default function FindMatch() {
     }
   }
 
-  const latestMyPost = useMemo(
-    () => safeMatchPosts.find(p => p.team === myTeam.name) || null,
-    [safeMatchPosts, myTeam.name]
-  )
-
-  const preferredContext = useMemo(() => {
-    const day = toDayLabel(latestMyPost?.date, myTeam.defaultDay)
-    const time = latestMyPost?.time || myTeam.defaultTime
-    const venue = latestMyPost?.venue || myTeam.preferredVenue
-    return { day, time, venue }
-  }, [latestMyPost, myTeam.defaultDay, myTeam.defaultTime, myTeam.preferredVenue])
+  const matchContext = useMemo(() => ({ venue: myTeam.preferredVenue }), [myTeam.preferredVenue])
 
   const scoreCandidate = (candidate) => {
     const elo = candidate.elo ?? getTeamElo(candidate)
@@ -490,18 +430,17 @@ export default function FindMatch() {
       return null
     }
 
-    const availability = getAvailabilityScore(candidate, preferredContext)
+    const venueFit = getVenueFitScore(candidate, matchContext)
     const formFit = getFormScore(myStrength, opponentStrength)
     const skillScore = getSkillScore(myTeam.skill, candidate.skill)
     const profileConfidence = getProfileConfidence(candidate)
-    const proposedDay = availability.availability.day || preferredContext.day
-    const proposedTime = candidate.postedTime || (availability.availability.slots && availability.availability.slots[0]) || preferredContext.time
-    const proposedVenue = candidate.postedVenue || (availability.availability.venues && availability.availability.venues[0]) || preferredContext.venue
-    const proposedDate = candidate.postedDate || nextDateForPreferredDay(proposedDay)
+    const proposedTime = candidate.postedTime || ''
+    const proposedVenue = candidate.postedVenue || (venueFit.availability.venues && venueFit.availability.venues[0]) || matchContext.venue
+    const proposedDate = candidate.postedDate || toIsoDate(1)
 
     const eloScore = clamp(1 - (eloDiff / 450), 0, 1)
     const distanceScore = clamp(1 - (distanceKm / 18), 0, 1)
-    const extraScore = (availability.score * 0.5) + (skillScore * 0.3) + (profileConfidence * 0.2)
+    const extraScore = (venueFit.score * 0.5) + (skillScore * 0.3) + (profileConfidence * 0.2)
 
     const score = Math.round(100 * (
       (eloScore * COMPATIBILITY_WEIGHTS.elo)
@@ -517,8 +456,7 @@ export default function FindMatch() {
       `${distanceDisplay}km from your team to posted futsal`,
       `Posted futsal: ${proposedVenue}`,
       formFit.challengeBias > 0 ? 'You can stretch to a stronger opponent' : formFit.challengeBias < 0 ? 'Better for a softer opponent while form recovers' : 'Form is balanced',
-      availability.sameDay ? `Both free on ${preferredContext.day}` : `Closest availability: ${availability.availability.day}`,
-      availability.venueOverlap ? `Venue match at ${preferredContext.venue}` : `Next best venue: ${availability.availability.venues[0]}`,
+      venueFit.venueOverlap ? `Venue match at ${matchContext.venue}` : `Posted venue: ${proposedVenue}`,
       `Skill balance: ${myTeam.skill} vs ${candidate.skill || 'Unknown'}`,
     ]
     return {
@@ -556,15 +494,6 @@ export default function FindMatch() {
         if (!active) return
 
         setTeams(mappedTeams)
-        // Filter any existing matchPosts to only include teams returned by the API.
-        const teamNames = new Set(mappedTeams.map(t => t.name))
-        // Do NOT auto-create match posts from teams. Only preserve any existing
-        // posts that match teams returned by the API. Posting should be manual
-        // via the "Post Your Team" UI to avoid unexpected automatic posts.
-        setMatchPosts(prev => {
-          const existing = Array.isArray(prev) ? prev.filter(p => teamNames.has(p.team)) : []
-          return existing
-        })
       } catch (_error) {
         if (!active) return
         setTeams(mockTeams)
@@ -668,19 +597,20 @@ export default function FindMatch() {
   }, [currentTeamName, setChallenges, setNotifications])
 
   const postedRecommendationCandidates = useMemo(() => {
-    const profileByTeamName = new Map(teams.map(team => [team.name, team]))
+    const profileByTeamName = new Map(teams.map(team => [normalizeTeamKey(team.name), team]))
     const seenTeams = new Set()
+    const myTeamKey = normalizeTeamKey(myTeam.name)
 
     return safeMatchPosts
-      .filter(post => post && post.team && post.team !== myTeam.name && post.venue)
+      .filter(post => post && post.team && normalizeTeamKey(post.team) !== myTeamKey && post.venue)
       .filter(post => {
-        const key = String(post.team)
+        const key = normalizeTeamKey(post.team)
         if (seenTeams.has(key)) return false
         seenTeams.add(key)
         return true
       })
       .map((post, index) => {
-        const profile = profileByTeamName.get(post.team) || {}
+        const profile = profileByTeamName.get(normalizeTeamKey(post.team)) || {}
         return {
           id: `posted-${post.id || index + 1}`,
           name: post.team,
@@ -692,7 +622,7 @@ export default function FindMatch() {
           wins: profile.wins || 0,
           losses: profile.losses || 0,
           streak: profile.streak || 0,
-          elo: profile.elo || post.elo || 1600,
+          elo: profile.elo || post.elo || 1500,
           color: profile.color || post.color || POST_COLORS[index % POST_COLORS.length],
           emoji: profile.emoji || post.emoji || POST_EMOJIS[index % POST_EMOJIS.length],
           profileCompleted: typeof profile.profileCompleted === 'boolean' ? profile.profileCompleted : true,
@@ -714,9 +644,9 @@ export default function FindMatch() {
       recommended: scored.slice(0, 5),
       others: scored.slice(5),
       hasFallback: scored.length < 5,
-      context: preferredContext,
+      context: matchContext,
     }
-  }, [postedRecommendationCandidates, preferredContext, myTeam.lat, myTeam.lng, myTeam.name, myTeam.skill, myTeam.streak, myTeam.elo, myTeam.wins, myTeam.losses])
+  }, [postedRecommendationCandidates, matchContext, myTeam.lat, myTeam.lng, myTeam.name, myTeam.skill, myTeam.streak, myTeam.elo, myTeam.wins, myTeam.losses])
 
   const reqModalFit = useMemo(() => {
     if (!reqModal) return null
@@ -732,7 +662,7 @@ export default function FindMatch() {
       emoji: reqModal.emoji,
       players: reqModal.players,
     })
-  }, [reqModal, preferredContext])
+  }, [reqModal, matchContext])
 
   const toast$ = (msg, type='success') => { setToast({ msg, type }); setTimeout(() => setToast({ msg:'', type:'success' }), 3500) }
 
@@ -764,7 +694,7 @@ export default function FindMatch() {
 
     const newPost = {
       id: Date.now(),
-      team: myTeam.name, emoji: '🦅', elo: 1600,
+      team: myTeam.name, emoji: '🦅', elo: myTeam.elo,
       location: myTeam.location, date: form.date, time: form.time,
       venue: form.venue, players: 8, note: form.note || 'Open for any match!',
       color: 'green', requestedBy: null, visibility: form.visibility,
@@ -784,7 +714,7 @@ export default function FindMatch() {
   const validateCompatibility = (opponent) => {
     const opponentElo = opponent.elo
     const eloDiff = Math.abs((opponentElo || myTeam.elo) - myTeam.elo)
-    if (eloDiff > 320) {
+    if (eloDiff > 400) {
       return { allow:false, message:`⛔ Request blocked: ELO gap is ${eloDiff}. Please use manual match request.` }
     }
 
@@ -793,17 +723,7 @@ export default function FindMatch() {
       return { allow:true, message:`⚠️ Request sent with caution: ${distanceKm.toFixed(2)}km distance might reduce acceptance.` }
     }
 
-    const preferredMinutes = parseTimeToMinutes(preferredContext.time)
-    const opponentMinutes = parseTimeToMinutes(opponent.time)
-    const timeGap = preferredMinutes !== null && opponentMinutes !== null
-      ? Math.abs(preferredMinutes - opponentMinutes) / 60
-      : 0
-
-    if (timeGap > 3) {
-      return { allow:true, message:`⚠️ Request sent with warning: time gap is ${timeGap.toFixed(1)} hours.` }
-    }
-
-    if (eloDiff > 200) {
+    if (eloDiff > 300) {
       return { allow:true, message:`⚠️ Request sent with warning: ELO gap is ${eloDiff}.` }
     }
     return { allow:true, message:null }
@@ -995,8 +915,8 @@ export default function FindMatch() {
       from: myTeam.name,
       to: team.name,
       date: team.proposedDate || toIsoDate(1),
-      time: team.proposedTime || myTeam.defaultTime,
-      venue: team.proposedVenue || preferredContext.venue,
+      time: team.proposedTime || '06:00 PM',
+      venue: team.proposedVenue || matchContext.venue,
       note: 'Manual challenge from team recommendation panel.',
       status: 'pending',
     }
@@ -1073,7 +993,7 @@ export default function FindMatch() {
               <span className="badge badge-info">Top {recommendationData.recommended.length} Algorithm Matches</span>
             </div>
             <div style={{ padding:'10px 16px', background:'var(--bg)', borderBottom:'1px solid var(--border)', fontSize:12, color:'var(--txt-3)' }}>
-              Tuned for {recommendationData.context.day}, {recommendationData.context.time} at {recommendationData.context.venue}
+              Tuned by ELO, distance, form, and posted venue
             </div>
             <div style={{ padding:'14px 16px' }}>
               {recommendationData.recommended.length === 0 ? (
@@ -1103,7 +1023,7 @@ export default function FindMatch() {
                         </div>
                         <div style={{ display:'flex', flexWrap:'wrap', gap:10, marginBottom:10, fontSize:12, color:'#4a5568' }}>
                           <span><i className="fas fa-calendar" style={{ color:'var(--orange)', marginRight:4 }} />{formatMonthDay(team.proposedDate || toIsoDate(1))}</span>
-                          <span><i className="fas fa-clock" style={{ color:'var(--purple)', marginRight:4 }} />{team.proposedTime || myTeam.defaultTime}</span>
+                          <span><i className="fas fa-clock" style={{ color:'var(--purple)', marginRight:4 }} />{team.proposedTime || '06:00 PM'}</span>
                         </div>
                         <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:14 }}>
                           {team.reasons.slice(0, 3).map(reason => (
@@ -1150,7 +1070,7 @@ export default function FindMatch() {
                       </div>
                       <div style={{ display:'flex', flexWrap:'wrap', gap:10, marginBottom:10, fontSize:12, color:'#4a5568' }}>
                         <span><i className="fas fa-calendar" style={{ color:'var(--orange)', marginRight:4 }} />{formatMonthDay(team.proposedDate || toIsoDate(1))}</span>
-                        <span><i className="fas fa-clock" style={{ color:'var(--purple)', marginRight:4 }} />{team.proposedTime || myTeam.defaultTime}</span>
+                        <span><i className="fas fa-clock" style={{ color:'var(--purple)', marginRight:4 }} />{team.proposedTime || '06:00 PM'}</span>
                       </div>
                       <button className="btn btn-outline btn-full" onClick={() => hitTeam(team)}>
                         <i className="fas fa-flag-checkered" /> Request Match

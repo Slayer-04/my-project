@@ -1,5 +1,6 @@
 const User = require('../models/User')
 const Team = require('../models/Team')
+const TeamJoinRequest = require('../models/TeamJoinRequest')
 const PendingRegistration = require('../models/PendingRegistration')
 const { generateOtp, hashOtp, compareOtpHash } = require('../utils/otpUtils')
 const bcrypt = require('bcryptjs')
@@ -139,7 +140,18 @@ const login = async (req, res) => {
     await user.save()
 
     if (user.role === 'team') {
-      const team = await Team.findOne({ email: user.email })
+      let team = await Team.findOne({ email: user.email })
+      let approvedMembership = null
+      if (!team) {
+        approvedMembership = await TeamJoinRequest.findOne({
+          requesterEmail: user.email,
+          status: 'approved',
+        }).sort({ reviewedAt: -1, createdAt: -1 })
+
+        if (approvedMembership?.teamId) {
+          team = await Team.findById(approvedMembership.teamId)
+        }
+      }
       const inferredTeamAccess = user.teamAccess || (
         user.teamInfo?.captainName && user.name && String(user.name).trim() !== String(user.teamInfo.captainName).trim()
           ? 'basic'
@@ -148,6 +160,7 @@ const login = async (req, res) => {
       const inferredIsCaptain = typeof user.isCaptain === 'boolean'
         ? user.isCaptain
         : inferredTeamAccess !== 'basic'
+      const isCaptain = team ? String(team.email).toLowerCase() === user.email : inferredIsCaptain
       return res.json({
         ok: true,
         user: {
@@ -165,8 +178,8 @@ const login = async (req, res) => {
             location: team?.location || '',
             district: team?.district || '',
           },
-          teamAccess: team ? 'full' : inferredTeamAccess,
-          isCaptain: team ? true : inferredIsCaptain,
+          teamAccess: team ? (isCaptain ? 'full' : 'basic') : inferredTeamAccess,
+          isCaptain,
           teamProfileCompleted: team?.teamProfileCompleted || false,
           ownerProfile: user.ownerProfile,
           verified: user.verified,

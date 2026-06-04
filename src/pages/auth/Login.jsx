@@ -108,31 +108,43 @@ export default function Login() {
         return
       }
 
+      const teamAccess = loggedInUser.teamAccess || 'full'
+      const isCaptain = loggedInUser.isCaptain !== false
+      const teamProfileCompleted = Boolean(data.team?.teamProfileCompleted)
+      const teamInfo = {
+        teamId: data.team?._id || loggedInUser.teamInfo?.teamId || null,
+        uid: formatUid(data.team?.uid || loggedInUser.teamInfo?.uid),
+        name: data.team?.teamName || loggedInUser.teamInfo?.teamName || loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
+        teamName: data.team?.teamName || loggedInUser.teamInfo?.teamName || loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
+        captainName: data.team?.captainName || loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
+        location: data.team?.location || loggedInUser.teamInfo?.location || '',
+        district: data.team?.district || loggedInUser.teamInfo?.district || '',
+        skill: data.team?.skill || 'Intermediate',
+        lat: data.team?.lat,
+        lng: data.team?.lng,
+        currentElo: data.team?.eloRating || 1000,
+      }
+      const hasJoinedTeam = Boolean(
+        teamProfileCompleted
+        || (
+          (teamAccess === 'basic' || !isCaptain)
+          && (teamInfo.teamId || teamInfo.uid || teamInfo.teamName)
+        )
+      )
+
       setUser({
         id: data.team?._id || loggedInUser.teamInfo?.teamId || loggedInUser._id,
-        uid: formatUid(data.team?.uid || loggedInUser.teamInfo?.uid),
+        uid: teamInfo.uid,
         name: loggedInUser.name,
         email: loggedInUser.email,
         role: 'team',
-        teamAccess: loggedInUser.teamAccess || 'full',
-        isCaptain: loggedInUser.isCaptain !== false,
-        teamProfileCompleted: data.team?.teamProfileCompleted || false,
+        teamAccess,
+        isCaptain,
+        teamProfileCompleted,
         eloRating: data.team?.eloRating || 1000,
         eloMatchesPlayed: data.team?.eloMatchesPlayed || 0,
-        teamName: data.team?.teamName || loggedInUser.teamInfo?.teamName || loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
-        teamInfo: {
-          name: data.team?.teamName || loggedInUser.teamInfo?.teamName || loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
-          teamName: data.team?.teamName || loggedInUser.teamInfo?.teamName || loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
-          captainName: loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
-          location: data.team?.location || loggedInUser.teamInfo?.location || '',
-          district: data.team?.district || loggedInUser.teamInfo?.district || '',
-          skill: data.team?.skill || 'Intermediate',
-          lat: data.team?.lat,
-          lng: data.team?.lng,
-          preferredDay: data.team?.preferredDay || 'Saturday',
-          preferredTime: data.team?.preferredTime || '06:00 PM',
-          currentElo: data.team?.eloRating || 1000,
-        },
+        teamName: teamInfo.teamName,
+        teamInfo,
       })
 
       // Show the team choice page only on the user's first login when their profile
@@ -141,14 +153,14 @@ export default function Login() {
       try {
         const uniqueKey = loggedInUser._id || loggedInUser.email || ''
         const seenKey = `fotmatch.seenTeamChoice:${uniqueKey}`
-        if (!data.team?.teamProfileCompleted && !localStorage.getItem(seenKey)) {
+        if (!hasJoinedTeam && !localStorage.getItem(seenKey)) {
           localStorage.setItem(seenKey, '1')
           navigate('/team/choice')
         } else {
           navigate('/team')
         }
       } catch (_e) {
-        navigate(data.team?.teamProfileCompleted ? '/team' : '/team/choice')
+        navigate(hasJoinedTeam ? '/team' : '/team/choice')
       }
     } catch (_error) {
       setErr('Unable to process login. Please try again.')

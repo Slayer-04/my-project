@@ -15,16 +15,12 @@ export default function TeamProfile() {
   const [editing, setEditing] = useState(false)
   const [leavingTeam, setLeavingTeam] = useState(false)
   const [teamRoster, setTeamRoster] = useState({ captainName: '', members: [] })
-  const dayOptions = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-  const timeOptions = ['06:00 AM', '07:00 AM', '08:00 AM', '10:00 AM', '12:00 PM', '02:00 PM', '04:00 PM', '06:00 PM', '08:00 PM']
   const [info, setInfo] = useState(
     user?.teamInfo || {
       name:'',
       location:'',
       district:'',
       skill:'Intermediate',
-      preferredDay:'Saturday',
-      preferredTime:'06:00 PM',
       lat: 27.7172,
       lng: 85.3240,
     }
@@ -37,8 +33,8 @@ export default function TeamProfile() {
 
   const skillBaseElo = {
     Beginner: 1000,
-    Intermediate: 1200,
-    Advanced: 1400,
+    Intermediate: 1500,
+    Advanced: 2000,
   }
 
   const myTeamName = info.name || user?.teamInfo?.name || user?.teamName || 'My Team'
@@ -151,7 +147,7 @@ export default function TeamProfile() {
   const total  = wins + losses + draws || 1
   const goalsFor = teamMatchHistory.reduce((sum, match) => sum + match.myScore, 0)
   const goalsAgainst = teamMatchHistory.reduce((sum, match) => sum + match.opponentScore, 0)
-  const baseElo = info.baseElo ?? skillBaseElo[info.skill] ?? 1200
+  const baseElo = info.baseElo ?? skillBaseElo[info.skill] ?? 1500
   const fallbackElo = baseElo + (wins * 25) + (draws * 10) - (losses * 20)
 
   // If the team hasn't played any matches yet, prefer the selected skill's base ELO
@@ -199,8 +195,6 @@ export default function TeamProfile() {
               lat: info.lat,
               lng: info.lng,
               skill: info.skill,
-              preferredDay: info.preferredDay,
-              preferredTime: info.preferredTime,
               locationVerified: true,
             }),
           })
@@ -222,8 +216,6 @@ export default function TeamProfile() {
               location: data.team.location || info.location.trim(),
               district: data.team.district || data.team.location || info.location.trim(),
               skill: data.team.skill || info.skill,
-              preferredDay: data.team.preferredDay || info.preferredDay,
-              preferredTime: data.team.preferredTime || info.preferredTime,
               lat: info.lat,
               lng: info.lng,
               baseElo,
@@ -240,8 +232,6 @@ export default function TeamProfile() {
               district: String(info.district || '').trim(),
               lat: info.lat,
               lng: info.lng,
-              preferredDay: info.preferredDay,
-              preferredTime: info.preferredTime,
             }),
           })
           const data = await response.json()
@@ -262,8 +252,6 @@ export default function TeamProfile() {
               location: data.team.location || info.location.trim(),
               district: data.team.district || data.team.location || info.location.trim(),
               skill: data.team.skill || info.skill,
-              preferredDay: data.team.preferredDay || info.preferredDay,
-              preferredTime: data.team.preferredTime || info.preferredTime,
               lat: info.lat,
               lng: info.lng,
               baseElo,
@@ -277,7 +265,7 @@ export default function TeamProfile() {
         return
       }
     } else {
-      const computedBaseElo = info.baseElo ?? skillBaseElo[info.skill] ?? 1200
+      const computedBaseElo = info.baseElo ?? skillBaseElo[info.skill] ?? 1500
       setUser({
         ...user,
         uid: user?.uid || '',
@@ -287,8 +275,6 @@ export default function TeamProfile() {
           name: info.name.trim(),
           location: info.location.trim(),
           district: String(info.district || '').trim(),
-          preferredDay: info.preferredDay,
-          preferredTime: info.preferredTime,
           lat: info.lat,
           lng: info.lng,
           baseElo: computedBaseElo,
@@ -338,8 +324,6 @@ export default function TeamProfile() {
           teamName: '',
           location: '',
           skill: 'Intermediate',
-          preferredDay: 'Saturday',
-          preferredTime: '06:00 PM',
           lat: 27.7172,
           lng: 85.3240,
           currentElo: 1000,
@@ -460,33 +444,10 @@ export default function TeamProfile() {
                             <option>Advanced</option>
                           </select>
                           <div style={{ fontSize:12, color:'#8a96a8', marginTop:6 }}>
-                            Base Elo for selected skill: <strong>{skillBaseElo[info.skill] ?? 1200}</strong>
+                            Base Elo for selected skill: <strong>{skillBaseElo[info.skill] ?? 1500}</strong>
                           </div>
                         </div>
 
-                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
-                          <div className="form-group">
-                            <label className="form-label">Preferred Day</label>
-                            <select
-                              className="form-control"
-                              value={info.preferredDay || 'Saturday'}
-                              onChange={e => setInfo({ ...info, preferredDay: e.target.value })}
-                            >
-                              {dayOptions.map(day => <option key={day}>{day}</option>)}
-                            </select>
-                          </div>
-
-                          <div className="form-group">
-                            <label className="form-label">Preferred Time</label>
-                            <select
-                              className="form-control"
-                              value={info.preferredTime || '06:00 PM'}
-                              onChange={e => setInfo({ ...info, preferredTime: e.target.value })}
-                            >
-                              {timeOptions.map(time => <option key={time}>{time}</option>)}
-                            </select>
-                          </div>
-                        </div>
                       </>
                     )}
 
@@ -516,29 +477,6 @@ export default function TeamProfile() {
                           Skill is locked after setup. Team name and location can be updated.
                         </div>
 
-                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
-                          <div className="form-group">
-                            <label className="form-label">Preferred Day</label>
-                            <select
-                              className="form-control"
-                              value={info.preferredDay || 'Saturday'}
-                              onChange={e => setInfo({ ...info, preferredDay: e.target.value })}
-                            >
-                              {dayOptions.map(day => <option key={day}>{day}</option>)}
-                            </select>
-                          </div>
-
-                          <div className="form-group">
-                            <label className="form-label">Preferred Time</label>
-                            <select
-                              className="form-control"
-                              value={info.preferredTime || '06:00 PM'}
-                              onChange={e => setInfo({ ...info, preferredTime: e.target.value })}
-                            >
-                              {timeOptions.map(time => <option key={time}>{time}</option>)}
-                            </select>
-                          </div>
-                        </div>
                       </>
                     )}
 
@@ -557,8 +495,6 @@ export default function TeamProfile() {
                       { lbl:'Team Name', val: info.name,      icon:'fa-users' },
                       { lbl:'Location',  val: info.location,  icon:'fa-location-dot' },
                       { lbl:'Skill',     val: info.skill,     icon:'fa-signal' },
-                      { lbl:'Preferred Day',  val: info.preferredDay || 'Saturday', icon:'fa-calendar-day' },
-                      { lbl:'Preferred Time', val: info.preferredTime || '06:00 PM', icon:'fa-clock' },
                       { lbl:'Captain',   val: captainName,                 icon:'fa-user-tie' },
                       { lbl:'Members',   val: `${memberCount} players`,   icon:'fa-person-running' },
                     ].map(item => (

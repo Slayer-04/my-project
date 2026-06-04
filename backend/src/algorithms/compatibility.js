@@ -8,7 +8,7 @@ const DEFAULT_WEIGHTS = {
 }
 
 const HARD_FILTERS = {
-  maxEloDiff: 500,
+  maxEloDiff: 400,
   maxDistanceKm: 4,
 }
 
@@ -83,80 +83,20 @@ function getVenueDistanceKm(team, venueCoords) {
 }
 
 function getAvailabilityScore(team, context) {
-  const preferredDay = context && context.day ? context.day : 'Saturday'
-  const preferredTime = context && context.time ? context.time : null
   const preferredVenue = context && context.venue ? context.venue : null
   const availability = team && team.availability ? team.availability : {}
-  const day = availability.day || preferredDay
-  const slots = Array.isArray(availability.slots) ? availability.slots : []
   const venues = Array.isArray(availability.venues) ? availability.venues : []
 
-  const sameDay = day === preferredDay
-  const slotGapHours = preferredTime ? getClosestSlotGapHours(slots, preferredTime) : 2
   const venueOverlap = preferredVenue ? venues.includes(preferredVenue) : false
-
-  const dayScore = sameDay ? 1 : 0.45
-  const slotScore = clamp(1 - (slotGapHours / 4), 0, 1)
   const venueScore = venueOverlap ? 1 : 0.55
 
   return {
-    score: (dayScore * 0.4) + (slotScore * 0.35) + (venueScore * 0.25),
-    sameDay,
-    slotGapHours,
+    score: venueScore,
     venueOverlap,
     availability: {
-      day,
-      slots,
       venues,
     },
   }
-}
-
-function parseTimeToMinutes(timeValue) {
-  if (!timeValue || typeof timeValue !== 'string') return null
-
-  const is12Hour = /AM|PM/i.test(timeValue)
-
-  if (is12Hour) {
-    const parts = timeValue.trim().split(' ')
-    const timePart = parts[0]
-    const meridiemRaw = parts[1]
-    if (!timePart || !meridiemRaw) return null
-
-    const timeParts = timePart.split(':')
-    const hourRaw = timeParts[0]
-    const minuteRaw = timeParts[1]
-    const meridiem = meridiemRaw.toUpperCase()
-    let hour = Number(hourRaw)
-    const minute = Number(minuteRaw)
-
-    if (Number.isNaN(hour) || Number.isNaN(minute)) return null
-    if (meridiem === 'PM' && hour !== 12) hour += 12
-    if (meridiem === 'AM' && hour === 12) hour = 0
-    return (hour * 60) + minute
-  }
-
-  const parts = timeValue.split(':')
-  const hour = Number(parts[0])
-  const minute = Number(parts[1])
-  if (Number.isNaN(hour) || Number.isNaN(minute)) return null
-  return (hour * 60) + minute
-}
-
-function getClosestSlotGapHours(slots, targetTimeValue) {
-  if (!Array.isArray(slots) || slots.length === 0) return 2
-
-  const targetMinutes = parseTimeToMinutes(targetTimeValue)
-  if (targetMinutes === null) return 2
-
-  const slotMinutes = slots
-    .map(parseTimeToMinutes)
-    .filter((value) => value !== null)
-
-  if (slotMinutes.length === 0) return 2
-
-  const minGapMinutes = Math.min(...slotMinutes.map((value) => Math.abs(value - targetMinutes)))
-  return minGapMinutes / 60
 }
 
 function getProfileConfidence(team) {
@@ -176,8 +116,6 @@ function scoreTeamCompatibility(options) {
     myTeam,
     candidate,
     venueCoords,
-    preferredDay,
-    preferredTime,
     preferredVenue,
     weights = DEFAULT_WEIGHTS,
   } = options || {}
@@ -195,8 +133,6 @@ function scoreTeamCompatibility(options) {
   const eloDiff = Math.abs(opponentStrength.elo - myStrength.elo)
   const distanceKm = getVenueDistanceKm(candidate, venueCoords) ?? getVenueDistanceKm(candidate, resolveCoordinates(myTeam))
   const availability = getAvailabilityScore(candidate, {
-    day: preferredDay,
-    time: preferredTime,
     venue: preferredVenue,
   })
   const formFit = getFormScore(myStrength, opponentStrength)
@@ -234,7 +170,6 @@ function scoreTeamCompatibility(options) {
       `ELO gap ${eloDiff} with ${opponentStrength.elo}`,
       `${distanceDisplay}km from ${preferredVenue || 'selected venue'}`,
       formFit.challengeBias > 0 ? 'You can stretch to a stronger opponent' : formFit.challengeBias < 0 ? 'Better for a softer opponent while form recovers' : 'Form is balanced',
-      availability.sameDay ? `Both free on ${preferredDay || 'selected day'}` : `Closest availability: ${availability.availability.day}`,
       availability.venueOverlap ? `Venue match at ${preferredVenue}` : `Next best venue: ${availability.availability.venues[0] || 'any venue'}`,
       `Skill balance: ${myTeam.skill || 'Unknown'} vs ${candidate.skill || 'Unknown'}`,
     ],
@@ -267,8 +202,6 @@ function rankTeamsByCompatibility(options) {
     myTeam,
     teams,
     venueCoords,
-    preferredDay,
-    preferredTime,
     preferredVenue,
     weights,
     limit = 5,
@@ -285,8 +218,6 @@ function rankTeamsByCompatibility(options) {
       myTeam,
       candidate: team,
       venueCoords,
-      preferredDay,
-      preferredTime,
       preferredVenue,
       weights,
     }))
