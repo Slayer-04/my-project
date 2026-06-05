@@ -76,7 +76,7 @@ export default function Challenges() {
     toast$(`🏆 Challenge sent to ${form.team}!`)
   }
 
-  const accept  = async id => { 
+  const accept = async id => {
     if (!canManageTeam) {
       toast$('Only the captain can accept challenges.')
       return
@@ -84,12 +84,18 @@ export default function Challenges() {
 
     const challenge = list.find(c => c.id === id)
     if (!challenge) return
-    
-    const bookingDate = challenge.date || new Date().toISOString().split('T')[0]
-    const bookingTime = challenge.time
+
+    const bookingDate  = challenge.date  || new Date().toISOString().split('T')[0]
+    const bookingTime  = challenge.time
     const bookingVenue = challenge.venue
-    
-    setChallenges(l => l.map(c => c.id===id ? {...c, status:'accepted', venue: bookingVenue, time: bookingTime}  : c))
+
+    // Guard: never create a self-match
+    if (challenge.from === myTeamName) {
+      toast$('Cannot accept a challenge from your own team.')
+      return
+    }
+
+    setChallenges(l => l.map(c => c.id === id ? { ...c, status: 'accepted', venue: bookingVenue, time: bookingTime } : c))
 
     try {
       await patchChallengeStatus(resolveId(challenge.id), 'accepted')
@@ -98,40 +104,65 @@ export default function Challenges() {
     }
 
     clearChallengeNotification(challenge.id)
-    
-    // Add bookings for BOTH teams so they both see it in upcoming bookings
-    const baseBookingId = Date.now()
-    setBookings(prev => [
-      ...prev,
-      {
-        id: baseBookingId,
-        team: myTeamName,
-        venue: bookingVenue,
-        date: bookingDate,
-        time: bookingTime,
-        status: 'confirmed',
-        players: 11,
-        amount: 'Rs. 1,200',
-        challengeId: challenge.id,
-        opponent: challenge.from,
-      },
-      {
-        id: baseBookingId + 1,
-        team: challenge.from,
-        venue: bookingVenue,
-        date: bookingDate,
-        time: bookingTime,
-        status: 'confirmed',
-        players: 11,
-        amount: 'Rs. 1,200',
-        challengeId: challenge.id,
-        opponent: myTeamName,
-      }
-    ])
-    
+
+    // Guard: only create bookings if this slot isn't already booked
+    const alreadyBooked = bookings.some(b =>
+      b.status !== 'cancelled'
+      && b.date === bookingDate
+      && b.time === bookingTime
+      && b.venue === bookingVenue
+      && (
+        (b.team === myTeamName    && b.opponent === challenge.from)
+        || (b.team === challenge.from && b.opponent === myTeamName)
+      )
+    )
+
+    if (!alreadyBooked) {
+      const baseBookingId = Date.now()
+      setBookings(prev => [
+        {
+          id: baseBookingId,
+          team: myTeamName,
+          venue: bookingVenue,
+          date: bookingDate,
+          time: bookingTime,
+          status: 'confirmed',
+          players: 11,
+          amount: 'Rs. 1,200',
+          challengeId: challenge.id,
+          opponent: challenge.from,
+        },
+        {
+          id: baseBookingId + 1,
+          team: challenge.from,
+          venue: bookingVenue,
+          date: bookingDate,
+          time: bookingTime,
+          status: 'confirmed',
+          players: 11,
+          amount: 'Rs. 1,200',
+          challengeId: challenge.id,
+          opponent: myTeamName,
+        },
+        ...prev,
+      ])
+    }
+
+    // Notify the challenger that their challenge was accepted
+    setNotifications(prev => [{
+      id: Date.now(),
+      text: `${myTeamName} accepted your challenge! ${bookingDate} at ${bookingTime} (${bookingVenue}).`,
+      time: 'just now',
+      unread: true,
+      team: challenge.from,       // targeted at the sender
+      type: 'match-update',
+      createdAt: new Date().toISOString(),
+    }, ...prev])
+
     setDetail(null)
     toast$(`✅ Challenge accepted! Match at ${bookingVenue} at ${bookingTime}`)
   }
+
   const decline = async id => {
     if (!canManageTeam) {
       toast$('Only the captain can decline challenges.')
@@ -141,7 +172,7 @@ export default function Challenges() {
     const challenge = list.find(c => c.id === id)
     if (!challenge) return
 
-    setChallenges(l => l.map(c => c.id===id ? {...c,status:'declined'}  : c))
+    setChallenges(l => l.map(c => c.id === id ? { ...c, status: 'declined' } : c))
 
     try {
       await patchChallengeStatus(resolveId(challenge.id), 'declined')
@@ -152,7 +183,8 @@ export default function Challenges() {
     clearChallengeNotification(challenge.id)
     setDetail(null)
   }
-  const cancel  = async id => {
+
+  const cancel = async id => {
     if (!canManageTeam) {
       toast$('Only the captain can cancel challenges.')
       return
@@ -161,7 +193,7 @@ export default function Challenges() {
     const challenge = list.find(c => c.id === id)
     if (!challenge) return
 
-    setChallenges(l => l.map(c => c.id===id ? {...c,status:'cancelled'} : c))
+    setChallenges(l => l.map(c => c.id === id ? { ...c, status: 'cancelled' } : c))
 
     try {
       await patchChallengeStatus(resolveId(challenge.id), 'cancelled')
@@ -174,17 +206,17 @@ export default function Challenges() {
     toast$('Challenge cancelled.')
   }
 
-  const incoming  = list.filter(c => c.to   === myTeamName)
-  const outgoing  = list.filter(c => c.from === myTeamName)
+  const incoming   = list.filter(c => c.to   === myTeamName)
+  const outgoing   = list.filter(c => c.from === myTeamName)
   const scopedList = [...incoming, ...outgoing]
-  const displayed = tab==='incoming' ? incoming : tab==='outgoing' ? outgoing : scopedList
+  const displayed  = tab === 'incoming' ? incoming : tab === 'outgoing' ? outgoing : scopedList
 
   const bdg = s =>
-    s==='accepted'  ? 'success' :
-    s==='declined'  ? 'danger'  :
-    s==='cancelled' ? 'muted'   : 'warning'
+    s === 'accepted'  ? 'success' :
+    s === 'declined'  ? 'danger'  :
+    s === 'cancelled' ? 'muted'   : 'warning'
 
-  const pendingIncoming = incoming.filter(c => c.status==='pending').length
+  const pendingIncoming = incoming.filter(c => c.status === 'pending').length
 
   return (
     <div className="app-shell">
@@ -204,10 +236,10 @@ export default function Challenges() {
           {/* Stats */}
           <div className="stats-row anim-2" style={{ gridTemplateColumns:'repeat(4,1fr)' }}>
             {[
-              { lbl:'Incoming', cls:'si-orange', icon:'fa-inbox',       v: incoming.length,                               sub:'Received' },
-              { lbl:'Outgoing', cls:'si-blue',   icon:'fa-paper-plane', v: outgoing.length,                               sub:'Sent by you' },
-              { lbl:'Accepted', cls:'si-green',  icon:'fa-check-circle',v: scopedList.filter(c=>c.status==='accepted').length,  sub:'Confirmed' },
-              { lbl:'Pending',  cls:'si-yellow', icon:'fa-clock',       v: scopedList.filter(c=>c.status==='pending').length,   sub:'Awaiting reply' },
+              { lbl:'Incoming', cls:'si-orange', icon:'fa-inbox',        v: incoming.length,                                    sub:'Received' },
+              { lbl:'Outgoing', cls:'si-blue',   icon:'fa-paper-plane',  v: outgoing.length,                                    sub:'Sent by you' },
+              { lbl:'Accepted', cls:'si-green',  icon:'fa-check-circle', v: scopedList.filter(c => c.status === 'accepted').length, sub:'Confirmed' },
+              { lbl:'Pending',  cls:'si-yellow', icon:'fa-clock',        v: scopedList.filter(c => c.status === 'pending').length,  sub:'Awaiting reply' },
             ].map(s => (
               <div className="stat-card" key={s.lbl}>
                 <div className={`stat-icon ${s.cls}`}><i className={`fas ${s.icon}`} /></div>
@@ -228,17 +260,17 @@ export default function Challenges() {
           <div style={{ display:'flex', gap:8, marginBottom:18 }} className="anim-3">
             {[
               { key:'all',      label:'All',      count: scopedList.length, dot: 0 },
-              { key:'incoming', label:'Incoming', count: incoming.length, dot: pendingIncoming },
-              { key:'outgoing', label:'Outgoing', count: outgoing.length, dot: 0 },
+              { key:'incoming', label:'Incoming', count: incoming.length,   dot: pendingIncoming },
+              { key:'outgoing', label:'Outgoing', count: outgoing.length,   dot: 0 },
             ].map(t => (
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
-                className={`btn btn-sm ${tab===t.key ? 'btn-primary' : 'btn-outline'}`}
+                className={`btn btn-sm ${tab === t.key ? 'btn-primary' : 'btn-outline'}`}
                 style={{ position:'relative' }}
               >
                 {t.label}
-                <span style={{ background: tab===t.key?'rgba(255,255,255,.25)':'var(--bg)', color: tab===t.key?'#fff':'var(--txt-3)', borderRadius:20, padding:'1px 7px', fontSize:11, fontWeight:800, marginLeft:4 }}>
+                <span style={{ background: tab === t.key ? 'rgba(255,255,255,.25)' : 'var(--bg)', color: tab === t.key ? '#fff' : 'var(--txt-3)', borderRadius:20, padding:'1px 7px', fontSize:11, fontWeight:800, marginLeft:4 }}>
                   {t.count}
                 </span>
                 {t.dot > 0 && (
@@ -256,22 +288,23 @@ export default function Challenges() {
               <div className="empty-state">
                 <i className="fas fa-flag" />
                 <h3>No challenges here</h3>
-                <p>{tab==='incoming' ? 'No one has challenged you yet.' : tab==='outgoing' ? "You haven't sent any challenges." : 'No challenges yet.'}</p>
+                <p>{tab === 'incoming' ? 'No one has challenged you yet.' : tab === 'outgoing' ? "You haven't sent any challenges." : 'No challenges yet.'}</p>
               </div>
             ) : displayed.map((c, i) => {
-              const isIncoming = c.to === MY_TEAM
+              // FIX: was using undefined MY_TEAM — use myTeamName
+              const isIncoming = c.to === myTeamName
               const isPending  = c.status === 'pending'
               return (
-                <div key={c.id} className="card" style={{ borderLeft:`4px solid ${c.status==='accepted'?'var(--green)':c.status==='pending'?'var(--orange)':c.status==='cancelled'?'#e4e8ee':'#ef4444'}` }}>
+                <div key={c.id} className="card" style={{ borderLeft:`4px solid ${c.status === 'accepted' ? 'var(--green)' : c.status === 'pending' ? 'var(--orange)' : c.status === 'cancelled' ? '#e4e8ee' : '#ef4444'}` }}>
                   <div style={{ padding:'16px 20px', display:'flex', gap:14, flexWrap:'wrap', alignItems:'flex-start' }}>
 
-                    <div style={{ width:44, height:44, borderRadius:12, background: isIncoming?'#fff7ed':'#eff6ff', display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, flexShrink:0 }}>
+                    <div style={{ width:44, height:44, borderRadius:12, background: isIncoming ? '#fff7ed' : '#eff6ff', display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, flexShrink:0 }}>
                       {isIncoming ? '📥' : '📤'}
                     </div>
 
                     <div style={{ flex:1, minWidth:200 }}>
                       <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', marginBottom:6 }}>
-                        <span style={{ fontSize:11, fontWeight:800, textTransform:'uppercase', letterSpacing:.5, color: isIncoming?'var(--orange)':'var(--blue)', background: isIncoming?'#fff7ed':'#eff6ff', padding:'2px 8px', borderRadius:20 }}>
+                        <span style={{ fontSize:11, fontWeight:800, textTransform:'uppercase', letterSpacing:.5, color: isIncoming ? 'var(--orange)' : 'var(--blue)', background: isIncoming ? '#fff7ed' : '#eff6ff', padding:'2px 8px', borderRadius:20 }}>
                           {isIncoming ? 'Received' : 'Sent'}
                         </span>
                         <span className={`badge badge-${bdg(c.status)}`}>{c.status}</span>
@@ -324,7 +357,7 @@ export default function Challenges() {
             <div className="card-bd">
               <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))', gap:10 }}>
                 {teams.filter(t => t.name !== myTeamName).map(t => {
-                  const alreadySent = list.some(c => c.from===myTeamName && c.to===t.name && c.status==='pending')
+                  const alreadySent = list.some(c => c.from === myTeamName && c.to === t.name && c.status === 'pending')
                   return (
                     <div key={t.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'11px 14px', background:'#f8fafc', borderRadius:10, border:'1px solid #e4e8ee' }}>
                       <div style={{ display:'flex', alignItems:'center', gap:10 }}>
@@ -337,7 +370,7 @@ export default function Challenges() {
                       <button
                         className={`btn btn-sm ${alreadySent ? 'btn-outline' : 'btn-primary'}`}
                         disabled={alreadySent}
-                        onClick={() => { setForm({...form,team:t.name}); setModal(true) }}
+                        onClick={() => { setForm({...form, team: t.name}); setModal(true) }}
                       >
                         {alreadySent ? '⏳ Sent' : <><i className="fas fa-flag" /> Challenge</>}
                       </button>
@@ -361,7 +394,7 @@ export default function Challenges() {
             </div>
             <div className="form-group">
               <label className="form-label">Challenge Team</label>
-              <select className="form-control" value={form.team} onChange={e => setForm({...form,team:e.target.value})}>
+              <select className="form-control" value={form.team} onChange={e => setForm({...form, team: e.target.value})}>
                 <option value="">— Select opponent —</option>
                 {teams.map(t => <option key={t.id}>{t.name} ({t.skill})</option>)}
               </select>
@@ -369,16 +402,16 @@ export default function Challenges() {
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
               <div className="form-group">
                 <label className="form-label">Match Date</label>
-                <input type="date" className="form-control" value={form.date} onChange={e => setForm({...form,date:e.target.value})} />
+                <input type="date" className="form-control" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
               </div>
               <div className="form-group">
                 <label className="form-label">Match Time</label>
-                <input type="time" className="form-control" value={form.time} onChange={e => setForm({...form,time:e.target.value})} />
+                <input type="time" className="form-control" value={form.time} onChange={e => setForm({...form, time: e.target.value})} />
               </div>
             </div>
             <div className="form-group">
               <label className="form-label">Venue</label>
-              <select className="form-control" value={form.venue} onChange={e => setForm({...form,venue:e.target.value})}>
+              <select className="form-control" value={form.venue} onChange={e => setForm({...form, venue: e.target.value})}>
                 <option>Arena Futsal Park</option>
                 <option>Champions Court</option>
                 <option>Goal Zone Futsal</option>
@@ -388,7 +421,7 @@ export default function Challenges() {
             <div className="form-group">
               <label className="form-label">Message (optional)</label>
               <input type="text" className="form-control" placeholder="e.g. Let's have a great game!"
-                value={form.note} onChange={e => setForm({...form,note:e.target.value})} />
+                value={form.note} onChange={e => setForm({...form, note: e.target.value})} />
             </div>
             <div style={{ display:'flex', gap:10, marginTop:8 }}>
               <button className="btn btn-primary" style={{ flex:1 }}
@@ -422,7 +455,8 @@ export default function Challenges() {
               { lbl:'Date',  val: detail.date,  icon:'fa-calendar' },
               { lbl:'Time',  val: detail.time,  icon:'fa-clock' },
               { lbl:'Venue', val: detail.venue, icon:'fa-building' },
-              { lbl:'Type',  val: detail.to===MY_TEAM ? 'Incoming' : 'Outgoing', icon:'fa-arrow-right-arrow-left' },
+              // FIX: was using undefined MY_TEAM — use myTeamName
+              { lbl:'Type',  val: detail.to === myTeamName ? 'Incoming' : 'Outgoing', icon:'fa-arrow-right-arrow-left' },
             ].map(r => (
               <div key={r.lbl} style={{ display:'flex', justifyContent:'space-between', padding:'9px 0', borderBottom:'1px solid #f0f4f8' }}>
                 <span style={{ fontSize:12, fontWeight:800, color:'#8a96a8', textTransform:'uppercase', display:'flex', alignItems:'center', gap:7 }}>
@@ -437,7 +471,7 @@ export default function Challenges() {
               </div>
             )}
             <div style={{ display:'flex', gap:10, marginTop:20 }}>
-                      {detail.status==='pending' && detail.to===myTeamName && (
+              {detail.status === 'pending' && detail.to === myTeamName && (
                 <>
                   <button className="btn btn-primary" style={{ flex:1 }} onClick={() => accept(detail.id)}>
                     <i className="fas fa-check" /> Accept
@@ -445,7 +479,7 @@ export default function Challenges() {
                   <button className="btn btn-outline" onClick={() => decline(detail.id)}>Decline</button>
                 </>
               )}
-              {detail.status==='pending' && detail.from===myTeamName && (
+              {detail.status === 'pending' && detail.from === myTeamName && (
                 <button className="btn btn-danger" style={{ flex:1 }} onClick={() => cancel(detail.id)}>
                   <i className="fas fa-xmark" /> Cancel Challenge
                 </button>

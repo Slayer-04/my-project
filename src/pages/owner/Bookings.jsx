@@ -102,6 +102,67 @@ export default function Bookings() {
 
   const ownerBookings = bookings.filter(b => !ownerVenueName || b.venue === ownerVenueName)
 
+  const parseTimeToMinutesOwner = (timeValue) => {
+    if (!timeValue) return null
+    const text = String(timeValue).trim()
+
+    // Accept formats like "HH:MM AM" or "HH:MM PM".
+    const is12Hour = /\b(AM|PM)\b/i.test(text)
+    if (is12Hour) {
+      const [timePart, meridiemRaw] = text.split(' ')
+      if (!timePart || !meridiemRaw) return null
+
+      const [hourRaw, minuteRaw] = timePart.split(':')
+      let hour = Number(hourRaw)
+      const minute = Number(minuteRaw)
+      if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+
+      const meridiem = meridiemRaw.toUpperCase()
+      if (meridiem === 'PM' && hour !== 12) hour += 12
+      if (meridiem === 'AM' && hour === 12) hour = 0
+      return (hour * 60) + minute
+    }
+
+    // Accept formats like "HH:MM".
+    const [hourRaw, minuteRaw] = text.split(':')
+    const hour = Number(hourRaw)
+    const minute = Number(minuteRaw)
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+    return (hour * 60) + minute
+  }
+
+  const parseDateToYMD = (dateValue) => {
+    if (!dateValue) return ''
+    const text = String(dateValue).trim()
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text
+    const d = new Date(text)
+    if (Number.isNaN(d.getTime())) return text
+    return d.toISOString().split('T')[0]
+  }
+
+  const isBookingExpired = (booking) => {
+    if (!booking?.date || !booking?.time) return false
+
+    const ymd = parseDateToYMD(booking.date)
+    const minutesStart = parseTimeToMinutesOwner(booking.time)
+    if (!ymd || minutesStart === null) return false
+
+    // Slot duration is 1 hour in the UI.
+    const slotEndMinutes = minutesStart + 60
+
+    const [year, month, day] = ymd.split('-').map(Number)
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return false
+
+    const endHours24 = Math.floor(slotEndMinutes / 60)
+    const endMinutes = slotEndMinutes % 60
+    const endDate = new Date(year, month - 1, day, endHours24, endMinutes, 0, 0)
+
+    return endDate.getTime() <= Date.now()
+  }
+
+  const nonExpiredBookings = ownerBookings.filter(b => !isBookingExpired(b))
+
+
   const hasConfirmedConflict = (targetBooking, ignoreBookingId) => (
     bookings.some(b => (
       b.status === 'confirmed'
@@ -267,11 +328,12 @@ export default function Bookings() {
     setDetail(null)
   }
 
-  const filtered = ownerBookings.filter(b => filter==='All' || b.status===filter.toLowerCase())
+  const filtered = nonExpiredBookings.filter(b => filter==='All' || b.status===filter.toLowerCase())
   
   // Build pending requests from server-backed bookings so owners can always act.
-  const pendingRequests = ownerBookings
+  const pendingRequests = nonExpiredBookings
     .filter(booking => booking.status === 'pending')
+
     .map(booking => ({
       id: booking.id,
       bookingId: booking.id,

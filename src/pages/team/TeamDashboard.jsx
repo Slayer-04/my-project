@@ -282,10 +282,10 @@ export default function TeamDashboard() {
   )
 
   const upcoming = myBookings
-    .filter(b => b.status !== 'cancelled' && (!b.opponent || !hasMatchScore(b)))
+    .filter(b => b.status !== 'cancelled' && isUpcoming(b.date, b.time) && (!b.opponent || !hasMatchScore(b)))
     .sort((a, b) => bookingSortValue(a) - bookingSortValue(b))
   const visibleUpcoming = showAllUpcoming ? upcoming : upcoming.slice(0, 3)
-  const upcomingCount = myBookings.filter(b => b.status !== 'cancelled' && (!b.opponent || !hasMatchScore(b))).length
+  const upcomingCount = myBookings.filter(b => b.status !== 'cancelled' && isUpcoming(b.date, b.time) && (!b.opponent || !hasMatchScore(b))).length
   const activeBookingCount = myBookings.filter(b => b.status !== 'cancelled').length
   const recent = teamMatchHistory.slice(0, 3)
   const seasonWins = teamMatchHistory.filter(match => match.result === 'win').length

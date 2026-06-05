@@ -117,22 +117,6 @@ export default function BookFutsal() {
   useEffect(() => {
     let active = true
 
-    const seedVenues = []
-
-    const mergeVenueLists = (liveVenues) => {
-      const combined = Array.isArray(liveVenues) ? liveVenues : []
-      const uniqueByVenue = [...new Map(combined.map(venue => [
-        `${String(venue.name || '').toLowerCase()}|${String(venue.location || '').toLowerCase()}`,
-        venue,
-      ])).values()]
-
-      return uniqueByVenue.sort((left, right) => {
-        const leftCreated = new Date(left.createdAt || 0).getTime()
-        const rightCreated = new Date(right.createdAt || 0).getTime()
-        return rightCreated - leftCreated
-      })
-    }
-
     const loadVenues = async () => {
       try {
         const response = await fetch(`${API_BASE}/venues`)
@@ -142,36 +126,72 @@ export default function BookFutsal() {
         if (!active || !Array.isArray(data)) return
 
         const mappedVenues = data.map(mapVenueFromApi)
-        const mergedVenues = mergeVenueLists(mappedVenues)
-        // Do not fall back to seeded venues. Only show venues returned by API (owner-linked).
+
+        const mergedVenues = [...new Map(mappedVenues.map(venue => [
+          `${String(venue.name || '').toLowerCase()}|${String(venue.location || '').toLowerCase()}`,
+          venue,
+        ])).values()].sort((left, right) => {
+          const leftCreated = new Date(left.createdAt || 0).getTime()
+          const rightCreated = new Date(right.createdAt || 0).getTime()
+          return rightCreated - leftCreated
+        })
+
         setVenueList(mergedVenues)
+
+        // ── FIX: merge venue bookings from API into existing local bookings
+        // instead of overwriting them. This prevents match/challenge bookings
+        // (which only live locally) from being wiped out.
+        try {
+          const bookingsResponse = await fetch(`${API_BASE}/bookings`)
+          if (!bookingsResponse.ok || !active) return
+
+          const bookingsData = await bookingsResponse.json()
+          if (!active || !Array.isArray(bookingsData)) return
+
+          const availableVenueNames = new Set(mappedVenues.map(v => v.name))
+          const apiVenueBookings = bookingsData
+            .map(mapBookingFromApi)
+            .filter(b => availableVenueNames.has(b.venue))
+
+          // Merge: keep all local bookings, add API venue bookings that
+          // don't already exist locally (matched by id OR by slot key)
+          setBookings(prev => {
+            const existingIds = new Set(prev.map(b => String(b.id)))
+            const existingSlots = new Set(prev.map(b =>
+              [
+                String(b.team || '').trim().toLowerCase(),
+                String(b.opponent || '').trim().toLowerCase(),
+                String(b.date || ''),
+                String(b.time || ''),
+                String(b.venue || '').trim().toLowerCase(),
+              ].join('|')
+            ))
+
+            const newFromApi = apiVenueBookings.filter(b => {
+              if (existingIds.has(String(b.id))) return false
+              const slot = [
+                String(b.team || '').trim().toLowerCase(),
+                String(b.opponent || '').trim().toLowerCase(),
+                String(b.date || ''),
+                String(b.time || ''),
+                String(b.venue || '').trim().toLowerCase(),
+              ].join('|')
+              return !existingSlots.has(slot)
+            })
+
+            return newFromApi.length > 0 ? [...prev, ...newFromApi] : prev
+          })
+        } catch (_bookingError) {
+          // Keep existing local bookings if API is unavailable
+        }
+
       } catch (_error) {
         if (!active) return
-        // On error, show no venues rather than seeded mock venues.
         setVenueList([])
       }
     }
 
-    const loadBookings = async () => {
-      try {
-        const response = await fetch(`${API_BASE}/bookings`)
-        if (!response.ok) return
-
-        const data = await response.json()
-        if (!active || !Array.isArray(data)) return
-
-        // Filter bookings to only include those for venues returned by the API.
-        const mappedBookings = data.map(mapBookingFromApi)
-        const availableVenueNames = new Set(mappedVenues ? mappedVenues.map(v => v.name) : [])
-        const filtered = mappedBookings.filter(b => availableVenueNames.size === 0 ? false : availableVenueNames.has(b.venue))
-        setBookings(filtered)
-      } catch (_error) {
-        // Keep existing local data when API is unavailable.
-      }
-    }
-
     loadVenues()
-    loadBookings()
 
     const venueRefreshId = setInterval(loadVenues, 5000)
 
@@ -206,7 +226,7 @@ export default function BookFutsal() {
     })
   }, [])
 
-  const parseTimeToMinutes = (timeValue) => {
+  const parseTimeToMinutesLocal = (timeValue) => {
     if (!timeValue) return null
     const [timePart, meridiemRaw] = timeValue.trim().split(' ')
     if (!timePart || !meridiemRaw) return null
@@ -228,8 +248,8 @@ export default function BookFutsal() {
     if (!bookingVenue) return []
 
     const operatingHours = getVenueOperatingHours(bookingVenue)
-    const openMinutes = parseTimeToMinutes(operatingHours.open) ?? (6 * 60)
-    const closeMinutes = parseTimeToMinutes(operatingHours.close) ?? (22 * 60)
+    const openMinutes = parseTimeToMinutesLocal(operatingHours.open) ?? (6 * 60)
+    const closeMinutes = parseTimeToMinutesLocal(operatingHours.close) ?? (22 * 60)
 
     const now = new Date()
     const todayId = now.toISOString().split('T')[0]
@@ -331,7 +351,7 @@ export default function BookFutsal() {
     if (bookingDate === todayId) {
       const now = new Date()
       const nowMinutes = (now.getHours() * 60) + now.getMinutes()
-      const slotMinutes = parseTimeToMinutes(slot)
+      const slotMinutes = parseTimeToMinutesLocal(slot)
       if (slotMinutes !== null && slotMinutes <= nowMinutes) {
         toast$(`⛔ ${slot} has already passed. Please choose a future slot.`)
         return
