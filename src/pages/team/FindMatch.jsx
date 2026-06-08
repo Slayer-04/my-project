@@ -321,9 +321,18 @@ const parseScheduledPostDate = (post) => {
 }
 
 const isActiveMatchPost = (post) => {
-  const scheduledDate = parseScheduledPostDate(post)
-  if (!scheduledDate) return true
-  return scheduledDate.getTime() >= Date.now()
+  const dateText = String(post?.date || '').trim()
+  if (!dateText) return true
+
+  const postDate = new Date(dateText)
+  if (Number.isNaN(postDate.getTime())) return true
+
+  // Keep posts visible until end of their scheduled day (midnight)
+  // so a post for "today" stays visible all day regardless of time
+  const endOfPostDay = new Date(postDate)
+  endOfPostDay.setHours(23, 59, 59, 999)
+
+  return endOfPostDay.getTime() >= Date.now()
 }
 
 export default function FindMatch() {
@@ -342,6 +351,9 @@ export default function FindMatch() {
     note:'',
     visibility:'24',
   })
+
+  // Defined early so all useEffects and handlers below can safely call it
+  const toast$ = (msg, type='success') => { setToast({ msg, type }); setTimeout(() => setToast({ msg:'', type:'success' }), 3500) }
 
   const currentTeamName = user?.teamInfo?.name || user?.teamInfo?.teamName || user?.teamInfo?.captainName || user?.name || user?.teamName || 'My Team'
   const currentTeamId = user?.id || user?._id || null
@@ -542,8 +554,6 @@ export default function FindMatch() {
         const uniqueByLabel = [...new Map(mapped.map(venue => [venue.label.toLowerCase(), venue])).values()]
 
         if (!active) return
-        // Do not fall back to seeded mock venues when API returns an empty array.
-        // Show only real venues derived from the backend (owner-linked).
         setVenueOptions(uniqueByLabel)
       } catch (_error) {
         if (!active) return
@@ -591,7 +601,6 @@ export default function FindMatch() {
     })
 
     return () => {
-      // Cleanup: remove this listener when component unmounts or dependencies change
       if (unsubscribe) unsubscribe()
     }
   }, [currentTeamName, setChallenges, setNotifications])
@@ -664,8 +673,6 @@ export default function FindMatch() {
     })
   }, [reqModal, matchContext])
 
-  const toast$ = (msg, type='success') => { setToast({ msg, type }); setTimeout(() => setToast({ msg:'', type:'success' }), 3500) }
-
   const visiblePosts = useMemo(() => {
     return safeMatchPosts
       .map(post => ({
@@ -737,6 +744,23 @@ export default function FindMatch() {
 
     if (!post?.requestedBy) return
 
+    // Guard: never create a self-match
+    const normalizedRequester = normalizeTeamKey(post.requestedBy)
+    const normalizedPostOwner = normalizeTeamKey(post.team)
+    const normalizedMyTeam    = normalizeTeamKey(myTeam.name)
+
+    if (normalizedRequester === normalizedPostOwner) {
+      toast$('Cannot create a match against the same team.', 'info')
+      return
+    }
+
+    if (normalizedRequester === normalizedMyTeam) {
+      toast$('Cannot accept a match request from your own team.', 'info')
+      return
+    }
+
+    const requesterTeamName = post.requestedBy
+
     setMatchPosts(prev => prev.map(p => p.id===post.id ? {...p, requestedBy: null, accepted: true} : p))
 
     const alreadyBooked = bookings.some(booking => (
@@ -753,6 +777,7 @@ export default function FindMatch() {
     if (!alreadyBooked) {
       const baseBookingId = Date.now()
       setBookings(prev => [
+        // Booking for the post owner (acceptor)
         {
           id: baseBookingId,
           team: myTeam.name,
@@ -766,6 +791,7 @@ export default function FindMatch() {
           source: 'find-match-post',
           postId: post.id,
         },
+        // Booking for the requesting team (so their dashboard shows the match too)
         {
           id: baseBookingId + 1,
           team: post.requestedBy,
@@ -803,12 +829,23 @@ export default function FindMatch() {
       }
     }))
 
+    // Notify the post owner's feed
     setNotifications(prev => [{
       id: Date.now(),
+      text: `You accepted ${post.requestedBy}'s match request. ${post.date} at ${post.time} (${post.venue}).`,
+      time: 'just now',
+      unread: true,
+      team: myTeam.name,
+      type: 'match-update',
+      createdAt: new Date().toISOString(),
+    },
+    // ── FIX 2: also notify the requesting team so they see the accepted match ──
+    {
+      id: Date.now() + 1,
       text: `${myTeam.name} accepted your match request. ${post.date} at ${post.time} (${post.venue}).`,
       time: 'just now',
       unread: true,
-      team: post.requestedBy,
+      team: post.requestedBy,         // targeted at the sender's team
       type: 'match-update',
       createdAt: new Date().toISOString(),
     }, ...prev])
@@ -816,18 +853,19 @@ export default function FindMatch() {
     toast$('✅ Match accepted and added to Upcoming Bookings.')
   }
 
-  const sendRequest = async (post) => {
+ const sendRequest = async (post) => {
     if (!canManageTeam) {
       toast$('Only the captain can send match requests.', 'info')
       return
     }
 
-    const validation = validateCompatibility(post)
-    if (!validation.allow) {
-      setReqModal(null)
-      toast$(validation.message, 'info')
+    // Prevent a team from requesting their own post
+    if (normalizeTeamKey(post.team) === normalizeTeamKey(myTeam.name)) {
+      toast$('You cannot send a request to your own post.', 'info')
       return
     }
+
+    const validation = validateCompatibility(post)
 
     setMatchPosts(prev => prev.map(p => p.id===post.id ? {...p, requestedBy:myTeam.name} : p))
 
@@ -856,7 +894,6 @@ export default function FindMatch() {
         postId: post.id,
       }
 
-      // Persist challenge to backend
       try {
         const response = await fetch(`${API_BASE}/challenges`, {
           method: 'POST',
@@ -875,23 +912,16 @@ export default function FindMatch() {
         const result = await response.json()
         if (response.ok && result.challenges) {
           const persistedChallenge = { ...newChallenge, id: result.challenges._id || challengeId }
-          
-          // Update local state with persisted challenge
           setChallenges(prev => [persistedChallenge, ...prev])
-          
-          // Emit socket event for real-time notification
           emitChallengeCreate(persistedChallenge)
         } else {
-          // Fallback: still add to local state if API fails
           setChallenges(prev => [newChallenge, ...prev])
           emitChallengeCreate(newChallenge)
         }
       } catch (_error) {
-        // Fallback: still add to local state and emit if API fails
         setChallenges(prev => [newChallenge, ...prev])
         emitChallengeCreate(newChallenge)
       }
-
     }
 
     setReqModal(null)
@@ -921,7 +951,6 @@ export default function FindMatch() {
       status: 'pending',
     }
 
-    // Persist challenge to backend
     try {
       const response = await fetch(`${API_BASE}/challenges`, {
         method: 'POST',
@@ -940,19 +969,13 @@ export default function FindMatch() {
       const result = await response.json()
       if (response.ok && result.challenges) {
         const persistedChallenge = { ...newChallenge, id: result.challenges._id || challengeId }
-        
-        // Update local state with persisted challenge
         setChallenges(prev => [persistedChallenge, ...prev])
-        
-        // Emit socket event for real-time notification
         emitChallengeCreate(persistedChallenge)
       } else {
-        // Fallback: still add to local state if API fails
         setChallenges(prev => [newChallenge, ...prev])
         emitChallengeCreate(newChallenge)
       }
     } catch (_error) {
-      // Fallback: still add to local state and emit if API fails
       setChallenges(prev => [newChallenge, ...prev])
       emitChallengeCreate(newChallenge)
     }

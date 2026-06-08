@@ -2,6 +2,7 @@ const express = require('express')
 const Booking = require('../models/Booking')
 const Challenge = require('../models/Challenge')
 const Match = require('../models/Match')
+const Notification = require('../models/Notification')
 
 const router = express.Router()
 
@@ -36,9 +37,14 @@ function createCrudRoutes({ path, label, model, createValidator, updateValidator
         return res.status(404).json({ message: `${label} not found.` })
       }
 
-      const validation = updateValidator(req.body || {}, record)
+      const validation = await updateValidator(req.body || {}, record)
       if (!validation.ok) {
         return res.status(400).json({ message: validation.message })
+      }
+
+      // Run any side effects (e.g. booking creation on challenge accept)
+      if (validation.sideEffect) {
+        await validation.sideEffect()
       }
 
       Object.assign(record, validation.data)
@@ -103,7 +109,7 @@ createCrudRoutes({
       },
     }
   },
-  updateValidator: (body, record) => {
+  updateValidator: async (body) => {
     const updates = {}
 
     if (typeof body.team !== 'undefined') {
@@ -168,6 +174,12 @@ createCrudRoutes({
       if (error) return { ok: false, message: error }
     }
 
+    // Guard: never allow a self-challenge
+    if (body.from && body.to &&
+        body.from.trim().toLowerCase() === body.to.trim().toLowerCase()) {
+      return { ok: false, message: 'A team cannot challenge itself.' }
+    }
+
     if (typeof body.status !== 'undefined' && !['pending', 'accepted', 'declined', 'cancelled'].includes(body.status)) {
       return { ok: false, message: 'status must be pending, accepted, declined, or cancelled.' }
     }
@@ -185,7 +197,8 @@ createCrudRoutes({
       },
     }
   },
-  updateValidator: (body) => {
+  // ── KEY FIX: updateValidator is now async and creates bookings on accept ──
+  updateValidator: async (body, record) => {
     const updates = {}
 
     for (const field of ['from', 'to', 'date', 'time', 'venue']) {
@@ -207,7 +220,65 @@ createCrudRoutes({
       updates.note = String(body.note || '').trim()
     }
 
-    return { ok: true, data: updates }
+    // When accepting, set up a sideEffect to create bookings for both teams
+    let sideEffect = null
+    if (updates.status === 'accepted' && record.status !== 'accepted') {
+      const fromTeam = (updates.from || record.from || '').trim()
+      const toTeam   = (updates.to   || record.to   || '').trim()
+      const date     = (updates.date || record.date || '').trim()
+      const time     = (updates.time || record.time || '').trim()
+      const venue    = (updates.venue || record.venue || '').trim()
+      const challengeId = record._id
+
+      // Guard: never create a self-match
+      if (fromTeam.toLowerCase() === toTeam.toLowerCase()) {
+        return { ok: false, message: 'Cannot create a match between the same team.' }
+      }
+
+      sideEffect = async () => {
+        // Check if bookings already exist for this slot
+        const existing = await Booking.findOne({
+          date,
+          time,
+          venue,
+          status: { $ne: 'cancelled' },
+          $or: [
+            { team: fromTeam, opponent: toTeam },
+            { team: toTeam,   opponent: fromTeam },
+          ],
+        })
+
+        if (!existing) {
+          const base = {
+            date, time, venue,
+            status:      'confirmed',
+            players:     11,
+            amount:      'Rs. 1,200',
+            challengeId,
+          }
+          await Promise.all([
+            Booking.create({ ...base, team: toTeam,   opponent: fromTeam }),
+            Booking.create({ ...base, team: fromTeam, opponent: toTeam   }),
+          ])
+        }
+
+        // Notify the challenger that their challenge was accepted
+        try {
+          await Notification.create({
+            team:        fromTeam,
+            text:        `${toTeam} accepted your challenge! Match on ${date} at ${time} (${venue}).`,
+            type:        'match-update',
+            challengeId: challengeId,
+            unread:      true,
+            createdAt:   new Date(),
+          })
+        } catch (_notifError) {
+          // Notification failure should not block booking creation
+        }
+      }
+    }
+
+    return { ok: true, data: updates, sideEffect }
   },
 })
 
@@ -238,7 +309,7 @@ createCrudRoutes({
       },
     }
   },
-  updateValidator: (body) => {
+  updateValidator: async (body) => {
     const updates = {}
 
     for (const field of ['opponent', 'score', 'date', 'venue']) {

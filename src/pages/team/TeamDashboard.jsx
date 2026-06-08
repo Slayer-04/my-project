@@ -19,6 +19,8 @@ export default function TeamDashboard() {
   const navigate = useNavigate()
   const [scoreModalOpen, setScoreModalOpen] = useState(false)
   const [selectedMatch, setSelectedMatch] = useState(null)
+  // Track bookings the user has dismissed so we don't re-open them automatically
+  const dismissedMatchIds = React.useRef(new Set())
   const [showAllUpcoming, setShowAllUpcoming] = useState(false)
   const teamAliases = [
     user?.teamInfo?.teamName,
@@ -53,12 +55,34 @@ export default function TeamDashboard() {
         const data = await response.json()
         if (!active || !Array.isArray(data)) return
 
-        const mappedBookings = data.map(mapBookingFromApi).filter(matchesTeam)
+        // Only pull venue bookings from API (no opponent field).
+        // Match/challenge bookings are local-only — the API rejects confirmed status
+        // so they are never stored in the DB. Merging them would create duplicates.
+        const apiVenueBookings = data.map(mapBookingFromApi).filter(b =>
+          matchesTeam(b) && !b.opponent
+        )
+
         setBookings(prev => {
-          const localOnly = prev.filter(booking => !matchesTeam(booking))
-          const merged = [...mappedBookings, ...prev.filter(matchesTeam)]
-          const uniqueById = [...new Map(merged.map(booking => [String(booking.id), booking])).values()]
-          return [...localOnly, ...uniqueById]
+          const existingIds   = new Set(prev.map(b => String(b.id)))
+          const existingSlots = new Set(prev.map(b => [
+            String(b.team  || '').trim().toLowerCase(),
+            String(b.date  || ''),
+            String(b.time  || ''),
+            String(b.venue || '').trim().toLowerCase(),
+          ].join('|')))
+
+          const newFromApi = apiVenueBookings.filter(b => {
+            if (existingIds.has(String(b.id))) return false
+            const slot = [
+              String(b.team  || '').trim().toLowerCase(),
+              String(b.date  || ''),
+              String(b.time  || ''),
+              String(b.venue || '').trim().toLowerCase(),
+            ].join('|')
+            return !existingSlots.has(slot)
+          })
+
+          return newFromApi.length > 0 ? [...prev, ...newFromApi] : prev
         })
       } catch (_error) {
         // Keep local bookings if the server is unavailable.
@@ -184,14 +208,22 @@ export default function TeamDashboard() {
     if (b.status !== 'confirmed' || !b.opponent) return false // Only confirmed matches with opponents
     if (!isMatchFinished(b.date, b.time)) return false // Only finished matches
     // Check if score already submitted
-    const scoreExists = matchResults.find(r => r.bookingId === b.id && r.team === myTeamName)
+    const scoreExists = matchResults.find(r => String(r.bookingId) === String(b.id) && r.team === myTeamName)
     return !scoreExists // Only if score not submitted
   })
 
   // Show score modal for first finished match needing score
   React.useEffect(() => {
-    if (finishedMatchesNeedingScores.length > 0 && !selectedMatch) {
-      setSelectedMatch(finishedMatchesNeedingScores[0])
+    if (selectedMatch) return
+    const next = finishedMatchesNeedingScores.find(b => {
+      // Skip self-matches (corrupt data)
+      if (String(b.team || '').trim().toLowerCase() === String(b.opponent || '').trim().toLowerCase()) return false
+      // Skip bookings the user already dismissed
+      if (dismissedMatchIds.current.has(String(b.id))) return false
+      return true
+    })
+    if (next) {
+      setSelectedMatch(next)
       setScoreModalOpen(true)
     }
   }, [finishedMatchesNeedingScores, selectedMatch])
@@ -278,14 +310,26 @@ export default function TeamDashboard() {
     .sort((left, right) => right.sortValue - left.sortValue)
 
   const hasMatchScore = (booking) => (
-    matchResults.some(result => result.bookingId === booking.id && result.team === myTeamName)
+    matchResults.some(result => String(result.bookingId) === String(booking.id) && result.team === myTeamName)
   )
 
   const upcoming = myBookings
-    .filter(b => b.status !== 'cancelled' && isUpcoming(b.date, b.time) && (!b.opponent || !hasMatchScore(b)))
+    .filter(b => {
+      if (b.status === 'cancelled') return false
+      if (!isUpcoming(b.date, b.time)) return false
+      if (b.opponent && !hasMatchScore(b) === false) return false
+      // Block self-matches (corrupt booking where team === opponent)
+      if (b.opponent && String(b.team || '').trim().toLowerCase() === String(b.opponent || '').trim().toLowerCase()) return false
+      return !b.opponent || !hasMatchScore(b)
+    })
     .sort((a, b) => bookingSortValue(a) - bookingSortValue(b))
   const visibleUpcoming = showAllUpcoming ? upcoming : upcoming.slice(0, 3)
-  const upcomingCount = myBookings.filter(b => b.status !== 'cancelled' && isUpcoming(b.date, b.time) && (!b.opponent || !hasMatchScore(b))).length
+  const upcomingCount = myBookings.filter(b =>
+    b.status !== 'cancelled' &&
+    isUpcoming(b.date, b.time) &&
+    (!b.opponent || !hasMatchScore(b)) &&
+    !(b.opponent && String(b.team || '').trim().toLowerCase() === String(b.opponent || '').trim().toLowerCase())
+  ).length
   const activeBookingCount = myBookings.filter(b => b.status !== 'cancelled').length
   const recent = teamMatchHistory.slice(0, 3)
   const seasonWins = teamMatchHistory.filter(match => match.result === 'win').length
@@ -454,7 +498,11 @@ export default function TeamDashboard() {
           booking={selectedMatch}
           myTeamName={myTeamName}
           onSubmit={handleScoreSubmit}
-          onClose={() => setScoreModalOpen(false)}
+          onClose={() => {
+            if (selectedMatch) dismissedMatchIds.current.add(String(selectedMatch.id))
+            setScoreModalOpen(false)
+            setSelectedMatch(null)
+          }}
         />
       )}
     </div>

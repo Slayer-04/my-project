@@ -32,17 +32,14 @@ export default function Topbar({ title, breadcrumb }) {
     if (notification?.type === 'challenge-request') {
       return `challenge:${resolveId(notification.challengeId)}`
     }
-
     if (notification?.type === 'join-request') {
       return `join:${resolveId(notification.joinRequestId) || resolveId(notification.id)}:${notification.joinRequestStatus || 'pending'}`
     }
-
     return `notification:${resolveId(notification?.id)}`
   }
 
   const dedupeNotifications = (items) => {
     const seen = new Set()
-
     return items.filter(notification => {
       const key = notificationKey(notification)
       if (!key || seen.has(key)) return false
@@ -60,12 +57,11 @@ export default function Topbar({ title, breadcrumb }) {
     .sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime())
     .filter(n => {
       if (n.team && n.team !== myTeamName) return false
-
       if (n.type !== 'challenge-request') return true
-
       const challenge = challengeById(resolveId(n.challengeId))
       return !challenge || challenge.status === 'pending'
     })
+
   const shownNotifications = showAllNotifications ? visibleNotifications : visibleNotifications.slice(0, 8)
   const unreadCount = visibleNotifications.filter(n => n.unread).length
 
@@ -109,11 +105,9 @@ export default function Topbar({ title, breadcrumb }) {
             )
             const filteredMappedNotifications = mappedNotifications.filter(notification => {
               if (notification.type !== 'challenge-request') return true
-
               const challengeStatus = challengeStatusById.get(resolveId(notification.challengeId))
               return !challengeStatus || challengeStatus === 'pending'
             })
-
             return dedupeNotifications([...otherNotifications, ...filteredMappedNotifications, ...localOnlyForTeam])
           })
         }
@@ -147,16 +141,13 @@ export default function Topbar({ title, breadcrumb }) {
             const localOnlyForTeam = prev.filter(
               notification => (!notification.team || notification.team === myTeamName) && !notification._id && !notification.id
             )
-
             const existingChallengeIds = new Set(
               [...withoutCurrentTeam, ...localOnlyForTeam, ...mappedNotifications].map(notification => resolveId(notification.challengeId))
             )
-
             const mergedChallengeNotifications = challengeNotifications.filter(notification => {
               const challengeId = resolveId(notification.challengeId)
               return challengeId && !existingChallengeIds.has(challengeId)
             })
-
             return dedupeNotifications([...withoutCurrentTeam, ...mappedNotifications, ...localOnlyForTeam, ...mergedChallengeNotifications])
           })
         }
@@ -185,9 +176,7 @@ export default function Topbar({ title, breadcrumb }) {
           resolveId(notification.challengeId) === resolveId(challengeData.id)
           || notification.text === `${challengeData.from} sent you a match request.`
         ))
-
         if (alreadyExists) return prev
-
         return dedupeNotifications([{
           id: Date.now(),
           team: myTeamName,
@@ -217,25 +206,21 @@ export default function Topbar({ title, breadcrumb }) {
   const removeNotification = (notification) => {
     const challengeId = resolveId(notification?.challengeId)
     const notificationId = resolveId(notification?.id)
-
     setNotifications(prev => prev.filter(item => {
       if (notification?.type === 'challenge-request') {
         return resolveId(item.challengeId) !== challengeId
       }
-
       return resolveId(item.id) !== notificationId
     }))
   }
 
   const patchChallengeStatus = async (challengeId, status) => {
     if (!challengeId) return
-
     const response = await fetch(`${API_BASE}/challenges/${challengeId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     })
-
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
       throw new Error(errorData.message || 'Failed to update challenge.')
@@ -247,29 +232,24 @@ export default function Topbar({ title, breadcrumb }) {
       updateNotificationStatus(notification.id, notification.text)
       return
     }
-
     try {
       const response = await fetch(`${API_BASE}/team-joins/${notification.joinRequestId}/${action}`, {
         method: 'PATCH',
       })
       const data = await response.json()
-
       if (!response.ok) {
         updateNotificationStatus(notification.id, data.message || notification.text)
         return
       }
-
       const nextStatus = action === 'approve' ? 'approved' : 'declined'
       const nextText = action === 'approve'
         ? `${notification.requesterName || 'Requester'} join request approved.`
         : `${notification.requesterName || 'Requester'} join request declined.`
-
       setNotifications(prev => prev.map(item => (
         item.id === notification.id
           ? { ...item, unread: false, text: nextText, joinRequestStatus: nextStatus, time: 'just now' }
           : item
       )))
-
       if (notification._id || notification.id) {
         const notificationId = notification._id || notification.id
         await fetch(`${API_BASE}/notifications/${notificationId}`, {
@@ -290,13 +270,21 @@ export default function Topbar({ title, breadcrumb }) {
       return
     }
 
-    const bookingDate = challenge.date || new Date().toISOString().split('T')[0]
-    const bookingTime = challenge.time
+    const fromTeam     = String(challenge.from  || '').trim()
+    const toTeam       = myTeamName
+    const bookingDate  = challenge.date  || new Date().toISOString().split('T')[0]
+    const bookingTime  = challenge.time
     const bookingVenue = challenge.venue
 
+    // ── FIX 1: guard against self-match ──────────────────────────────────────
+    if (fromTeam.toLowerCase() === toTeam.toLowerCase()) {
+      removeNotification(notification)
+      return
+    }
+
     setChallenges(prev => prev.map(item => (
-      item.id === challenge.id 
-        ? { ...item, status: 'accepted', venue: bookingVenue, time: bookingTime } 
+      item.id === challenge.id
+        ? { ...item, status: 'accepted', venue: bookingVenue, time: bookingTime }
         : item
     )))
 
@@ -306,35 +294,60 @@ export default function Topbar({ title, breadcrumb }) {
       return
     }
 
-    // Add bookings for BOTH teams so they both see it in upcoming bookings
-    const baseBookingId = Date.now()
-    setBookings(prev => [
-      ...prev,
-      {
-        id: baseBookingId,
-        team: myTeamName,
-        venue: bookingVenue,
-        date: bookingDate,
-        time: bookingTime,
-        status: 'confirmed',
-        players: 11,
-        amount: 'Rs. 1,200',
-        challengeId: challenge.id,
-        opponent: challenge.from,
-      },
-      {
-        id: baseBookingId + 1,
-        team: challenge.from,
-        venue: bookingVenue,
-        date: bookingDate,
-        time: bookingTime,
-        status: 'confirmed',
-        players: 11,
-        amount: 'Rs. 1,200',
-        challengeId: challenge.id,
-        opponent: myTeamName,
-      }
-    ])
+    // ── FIX 2: alreadyBooked check — prevents duplicate bookings when ─────────
+    // user accepts from both notification bell AND Challenges page
+    const alreadyBooked = bookings.some(b =>
+      b.status !== 'cancelled'
+      && b.date    === bookingDate
+      && b.time    === bookingTime
+      && b.venue   === bookingVenue
+      && (
+        (b.team === toTeam   && b.opponent === fromTeam)
+        || (b.team === fromTeam && b.opponent === toTeam)
+      )
+    )
+
+    if (!alreadyBooked) {
+      const baseBookingId = Date.now()
+      setBookings(prev => [
+        {
+          id: baseBookingId,
+          team: toTeam,
+          venue: bookingVenue,
+          date: bookingDate,
+          time: bookingTime,
+          status: 'confirmed',
+          players: 11,
+          amount: 'Rs. 1,200',
+          challengeId: challenge.id,
+          opponent: fromTeam,
+        },
+        {
+          id: baseBookingId + 1,
+          team: fromTeam,
+          venue: bookingVenue,
+          date: bookingDate,
+          time: bookingTime,
+          status: 'confirmed',
+          players: 11,
+          amount: 'Rs. 1,200',
+          challengeId: challenge.id,
+          opponent: toTeam,
+        },
+        ...prev,
+      ])
+    }
+
+    // ── FIX 3: notify the challenger so they see the accepted match ───────────
+    setNotifications(prev => [{
+      id: Date.now() + 2,
+      text: `${toTeam} accepted your challenge! Match on ${bookingDate} at ${bookingTime} (${bookingVenue}).`,
+      time: 'just now',
+      unread: true,
+      team: fromTeam,
+      type: 'match-update',
+      createdAt: new Date().toISOString(),
+    }, ...prev])
 
     removeNotification(notification)
   }
@@ -345,17 +358,14 @@ export default function Topbar({ title, breadcrumb }) {
       removeNotification(notification)
       return
     }
-
     setChallenges(prev => prev.map(item => (
       item.id === challenge.id ? { ...item, status: 'declined' } : item
     )))
-
     try {
       await patchChallengeStatus(resolveId(challenge.id), 'declined')
     } catch (_error) {
       return
     }
-
     removeNotification(notification)
   }
 
@@ -394,7 +404,6 @@ export default function Topbar({ title, breadcrumb }) {
                     const challenge = challengeById(resolveId(n.challengeId))
                     const actionable = challenge && challenge.status === 'pending' && challenge.to === myTeamName
                     if (!actionable) return null
-
                     return (
                       <div style={{ display:'flex', gap:8, marginTop:8 }}>
                         <button
