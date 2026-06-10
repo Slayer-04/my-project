@@ -8,7 +8,7 @@ import { getApiBaseUrl } from '../../utils/apiConfig.js'
 const API_BASE = getApiBaseUrl()
 
 export default function Challenges() {
-  const { user, challenges, setChallenges, setNotifications, bookings, setBookings } = useAuth()
+  const { user, challenges, setChallenges, notifications, setNotifications, bookings, setBookings } = useAuth()
   const [modal,  setModal]  = useState(false)
   const [tab,    setTab]    = useState('all')
   const [toast,  setToast]  = useState('')
@@ -27,8 +27,25 @@ export default function Challenges() {
     return ''
   }
 
-  const clearChallengeNotification = (challengeId) => {
+  const clearChallengeNotification = async (challengeId) => {
+    const targetNotif = (notifications || []).find(notification => resolveId(notification.challengeId) === resolveId(challengeId))
     setNotifications(prev => prev.filter(notification => resolveId(notification.challengeId) !== resolveId(challengeId)))
+
+    if (targetNotif && (targetNotif._id || targetNotif.id)) {
+      const dbId = targetNotif._id || targetNotif.id
+      const isDbId = /^[0-9a-fA-F]{24}$/.test(dbId)
+      if (isDbId) {
+        try {
+          await fetch(`${API_BASE}/notifications/${dbId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ unread: false }),
+          })
+        } catch (_e) {
+          // Ignore network errors
+        }
+      }
+    }
   }
 
   const patchChallengeStatus = async (challengeId, status) => {

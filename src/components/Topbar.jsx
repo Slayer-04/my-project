@@ -97,17 +97,18 @@ export default function Topbar({ title, breadcrumb }) {
             : []
         )
 
+        const filteredMappedNotifications = mappedNotifications.filter(notification => {
+          if (notification.type !== 'challenge-request') return true
+          const challengeStatus = challengeStatusById.get(resolveId(notification.challengeId))
+          return !challengeStatus || challengeStatus === 'pending'
+        })
+
         if (notificationsResponse.ok && Array.isArray(notificationsData)) {
           setNotifications(prev => {
             const otherNotifications = prev.filter(notification => notification.team && notification.team !== myTeamName)
             const localOnlyForTeam = prev.filter(
               notification => (!notification.team || notification.team === myTeamName) && !notification._id && !notification.id
             )
-            const filteredMappedNotifications = mappedNotifications.filter(notification => {
-              if (notification.type !== 'challenge-request') return true
-              const challengeStatus = challengeStatusById.get(resolveId(notification.challengeId))
-              return !challengeStatus || challengeStatus === 'pending'
-            })
             return dedupeNotifications([...otherNotifications, ...filteredMappedNotifications, ...localOnlyForTeam])
           })
         }
@@ -142,13 +143,13 @@ export default function Topbar({ title, breadcrumb }) {
               notification => (!notification.team || notification.team === myTeamName) && !notification._id && !notification.id
             )
             const existingChallengeIds = new Set(
-              [...withoutCurrentTeam, ...localOnlyForTeam, ...mappedNotifications].map(notification => resolveId(notification.challengeId))
+              [...withoutCurrentTeam, ...localOnlyForTeam, ...filteredMappedNotifications].map(notification => resolveId(notification.challengeId))
             )
             const mergedChallengeNotifications = challengeNotifications.filter(notification => {
               const challengeId = resolveId(notification.challengeId)
               return challengeId && !existingChallengeIds.has(challengeId)
             })
-            return dedupeNotifications([...withoutCurrentTeam, ...mappedNotifications, ...localOnlyForTeam, ...mergedChallengeNotifications])
+            return dedupeNotifications([...withoutCurrentTeam, ...filteredMappedNotifications, ...localOnlyForTeam, ...mergedChallengeNotifications])
           })
         }
       } catch (_error) {
@@ -294,6 +295,20 @@ export default function Topbar({ title, breadcrumb }) {
       return
     }
 
+    // Mark the notification as read in the backend DB
+    if (notification._id || notification.id) {
+      const notificationId = notification._id || notification.id
+      try {
+        await fetch(`${API_BASE}/notifications/${notificationId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ unread: false }),
+        })
+      } catch (_e) {
+        // Ignore network errors
+      }
+    }
+
     // ── FIX 2: alreadyBooked check — prevents duplicate bookings when ─────────
     // user accepts from both notification bell AND Challenges page
     const alreadyBooked = bookings.some(b =>
@@ -366,6 +381,21 @@ export default function Topbar({ title, breadcrumb }) {
     } catch (_error) {
       return
     }
+
+    // Mark the notification as read in the backend DB
+    if (notification._id || notification.id) {
+      const notificationId = notification._id || notification.id
+      try {
+        await fetch(`${API_BASE}/notifications/${notificationId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ unread: false }),
+        })
+      } catch (_e) {
+        // Ignore network errors
+      }
+    }
+
     removeNotification(notification)
   }
 

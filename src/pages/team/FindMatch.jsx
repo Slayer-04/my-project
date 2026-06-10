@@ -336,7 +336,7 @@ const isActiveMatchPost = (post) => {
 }
 
 export default function FindMatch() {
-  const { user, challenges, setChallenges, setNotifications, matchPosts, setMatchPosts, bookings, setBookings } = useAuth()
+  const { user, challenges, setChallenges, notifications, setNotifications, matchPosts, setMatchPosts, bookings, setBookings } = useAuth()
   const [teams,     setTeams]     = useState(mockTeams)
   const [toast,     setToast]     = useState({ msg:'', type:'success' })
   const [postModal, setPostModal] = useState(false)
@@ -517,7 +517,7 @@ export default function FindMatch() {
     return () => {
       active = false
     }
-  }, [setMatchPosts])
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -736,7 +736,13 @@ export default function FindMatch() {
     return { allow:true, message:null }
   }
 
-  const acceptRequest = (post) => {
+  // Helper: normalise a MongoDB ObjectId or numeric id to a plain string for comparison
+  const resolveId = (value) => String(value || '').trim()
+
+  // ─── FIX 1: acceptRequest — guard against self-match ────────────────────────
+  // When the post owner accepts, create bookings only if the two teams are different.
+  // Also add a notification for the requesting team so they see the confirmation.
+  const acceptRequest = async (post) => {
     if (!canManageTeam) {
       toast$('Only the captain can accept match requests.', 'info')
       return
@@ -744,21 +750,14 @@ export default function FindMatch() {
 
     if (!post?.requestedBy) return
 
-    // Guard: never create a self-match
-    const normalizedRequester = normalizeTeamKey(post.requestedBy)
-    const normalizedPostOwner = normalizeTeamKey(post.team)
-    const normalizedMyTeam    = normalizeTeamKey(myTeam.name)
-
-    if (normalizedRequester === normalizedPostOwner) {
-      toast$('Cannot create a match against the same team.', 'info')
+    // Guard: never accept a request where the requester is the same as the post owner
+    if (
+      !post.requestedBy ||
+      normalizeTeamKey(post.requestedBy) === normalizeTeamKey(myTeam.name)
+    ) {
+      toast$('Cannot create a match against your own team.', 'info')
       return
     }
-
-    if (normalizedRequester === normalizedMyTeam) {
-      toast$('Cannot accept a match request from your own team.', 'info')
-      return
-    }
-
     const requesterTeamName = post.requestedBy
 
     setMatchPosts(prev => prev.map(p => p.id===post.id ? {...p, requestedBy: null, accepted: true} : p))
@@ -807,6 +806,50 @@ export default function FindMatch() {
         },
         ...prev,
       ])
+    }
+
+    // Find and update the matching challenge on the backend
+    const matchingChallenge = challenges.find(challenge => (
+      challenge.status === 'pending'
+      && challenge.from === post.requestedBy
+      && challenge.to === myTeam.name
+      && challenge.date === post.date
+      && challenge.venue === post.venue
+    ))
+
+    if (matchingChallenge) {
+      const challengeId = matchingChallenge._id || matchingChallenge.id
+      try {
+        await fetch(`${API_BASE}/challenges/${challengeId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'accepted' }),
+        })
+      } catch (_error) {
+        // Ignore network errors
+      }
+
+      // Find and update matching notifications in backend DB
+      const targetNotif = (notifications || []).find(notification => (
+        notification.type === 'challenge-request'
+        && resolveId(notification.challengeId) === resolveId(challengeId)
+      ))
+
+      if (targetNotif && (targetNotif._id || targetNotif.id)) {
+        const dbId = targetNotif._id || targetNotif.id
+        const isDbId = /^[0-9a-fA-F]{24}$/.test(dbId)
+        if (isDbId) {
+          try {
+            await fetch(`${API_BASE}/notifications/${dbId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ unread: false }),
+            })
+          } catch (_e) {
+            // Ignore
+          }
+        }
+      }
     }
 
     setChallenges(prev => prev.map(challenge => {
@@ -867,7 +910,8 @@ export default function FindMatch() {
 
     const validation = validateCompatibility(post)
 
-    setMatchPosts(prev => prev.map(p => p.id===post.id ? {...p, requestedBy:myTeam.name} : p))
+    // Remove the post immediately when a team sends a match request
+    setMatchPosts(prev => prev.filter(p => p.id !== post.id))
 
     const challengeAlreadyExists = challenges.some(challenge => (
       challenge.from === myTeam.name

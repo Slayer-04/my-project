@@ -22,6 +22,7 @@ export default function TeamDashboard() {
   // Track bookings the user has dismissed so we don't re-open them automatically
   const dismissedMatchIds = React.useRef(new Set())
   const [showAllUpcoming, setShowAllUpcoming] = useState(false)
+  const [showAllMatches, setShowAllMatches] = useState(false)
   const teamAliases = [
     user?.teamInfo?.teamName,
     user?.teamInfo?.name,
@@ -55,31 +56,50 @@ export default function TeamDashboard() {
         const data = await response.json()
         if (!active || !Array.isArray(data)) return
 
-        // Only pull venue bookings from API (no opponent field).
-        // Match/challenge bookings are local-only — the API rejects confirmed status
-        // so they are never stored in the DB. Merging them would create duplicates.
-        const apiVenueBookings = data.map(mapBookingFromApi).filter(b =>
-          matchesTeam(b) && !b.opponent
-        )
+        // Pull all bookings for this team from the API — both venue-only bookings
+        // and match bookings (with opponent). The backend creates confirmed match
+        // bookings directly when a challenge is accepted, so we must load them here
+        // or they will never appear on the dashboard after a page reload.
+        const apiBookings = data.map(mapBookingFromApi).filter(b => {
+          if (!matchesTeam(b)) return false
+          // For match bookings (has opponent), only show ones this team owns (b.team)
+          // to avoid showing the opponent's copy (which would display as a self-match)
+          if (b.opponent) {
+            const bookingTeam = String(b.team || '').trim()
+            return teamAliases.some(a => a === bookingTeam)
+          }
+          return true
+        })
 
         setBookings(prev => {
-          const existingIds   = new Set(prev.map(b => String(b.id)))
-          const existingSlots = new Set(prev.map(b => [
-            String(b.team  || '').trim().toLowerCase(),
-            String(b.date  || ''),
-            String(b.time  || ''),
-            String(b.venue || '').trim().toLowerCase(),
-          ].join('|')))
+          const existingIds = new Set(prev.map(b => String(b.id)))
 
-          const newFromApi = apiVenueBookings.filter(b => {
+          // For match bookings, also deduplicate by team+opponent+date+time+venue slot
+          const existingMatchSlots = new Set(
+            prev
+              .filter(b => b.opponent)
+              .map(b => [
+                String(b.team     || '').trim().toLowerCase(),
+                String(b.opponent || '').trim().toLowerCase(),
+                String(b.date     || ''),
+                String(b.time     || ''),
+                String(b.venue    || '').trim().toLowerCase(),
+              ].join('|'))
+          )
+
+          const newFromApi = apiBookings.filter(b => {
             if (existingIds.has(String(b.id))) return false
-            const slot = [
-              String(b.team  || '').trim().toLowerCase(),
-              String(b.date  || ''),
-              String(b.time  || ''),
-              String(b.venue || '').trim().toLowerCase(),
-            ].join('|')
-            return !existingSlots.has(slot)
+            if (b.opponent) {
+              const slot = [
+                String(b.team     || '').trim().toLowerCase(),
+                String(b.opponent || '').trim().toLowerCase(),
+                String(b.date     || ''),
+                String(b.time     || ''),
+                String(b.venue    || '').trim().toLowerCase(),
+              ].join('|')
+              if (existingMatchSlots.has(slot)) return false
+            }
+            return true
           })
 
           return newFromApi.length > 0 ? [...prev, ...newFromApi] : prev
@@ -137,7 +157,15 @@ export default function TeamDashboard() {
     }
   }, [bookings, matchPosts, setBookings])
 
-  const myBookings = bookings.filter(matchesTeam)
+  // Only show bookings where myTeam is the booking owner (b.team).
+  // The second booking created for the opponent team (b.team = opponentTeam) is meant
+  // for the opponent's dashboard — including it here causes the "Team A vs Team A" 
+  // self-match display bug because the render always shows "{myTeamName} vs {b.opponent}".
+  const myBookings = bookings.filter(b => {
+    if (!b.opponent) return matchesTeam(b)   // venue-only bookings: use full alias match
+    const bookingTeam = String(b.team || '').trim()
+    return teamAliases.some(alias => alias === bookingTeam)
+  })
   
   // Helper: Parse time string (12-hour format) to minutes since midnight
   const parseTimeToMinutes = (timeStr) => {
@@ -207,6 +235,11 @@ export default function TeamDashboard() {
   const finishedMatchesNeedingScores = myBookings.filter(b => {
     if (b.status !== 'confirmed' || !b.opponent) return false // Only confirmed matches with opponents
     if (!isMatchFinished(b.date, b.time)) return false // Only finished matches
+    // Only process bookings where this team is the owner (not the opponent copy)
+    const bookingTeam = String(b.team || '').trim()
+    if (!teamAliases.some(alias => alias === bookingTeam)) return false
+    // Skip if the opponent is the same as this team (corrupt self-match data)
+    if (String(b.opponent || '').trim().toLowerCase() === bookingTeam.toLowerCase()) return false
     // Check if score already submitted
     const scoreExists = matchResults.find(r => String(r.bookingId) === String(b.id) && r.team === myTeamName)
     return !scoreExists // Only if score not submitted
@@ -317,13 +350,27 @@ export default function TeamDashboard() {
     .filter(b => {
       if (b.status === 'cancelled') return false
       if (!isUpcoming(b.date, b.time)) return false
-      if (b.opponent && !hasMatchScore(b) === false) return false
       // Block self-matches (corrupt booking where team === opponent)
       if (b.opponent && String(b.team || '').trim().toLowerCase() === String(b.opponent || '').trim().toLowerCase()) return false
-      return !b.opponent || !hasMatchScore(b)
+      // For match bookings, hide ones where the score has already been submitted
+      if (b.opponent && hasMatchScore(b)) return false
+      return true
     })
     .sort((a, b) => bookingSortValue(a) - bookingSortValue(b))
   const visibleUpcoming = showAllUpcoming ? upcoming : upcoming.slice(0, 3)
+
+  // Upcoming matches — confirmed bookings with an opponent (i.e. match bookings, not venue-only)
+  const upcomingMatches = myBookings.filter(b => {
+    if (b.status === 'cancelled' || !b.opponent) return false
+    if (!isUpcoming(b.date, b.time)) return false
+    // Only show bookings owned by this team
+    const bookingTeam = String(b.team || '').trim()
+    if (!teamAliases.some(a => a === bookingTeam)) return false
+    // Skip self-matches
+    if (bookingTeam.toLowerCase() === String(b.opponent || '').trim().toLowerCase()) return false
+    return true
+  }).sort((a, b) => bookingSortValue(a) - bookingSortValue(b))
+  const visibleMatches = showAllMatches ? upcomingMatches : upcomingMatches.slice(0, 5)
   const upcomingCount = myBookings.filter(b =>
     b.status !== 'cancelled' &&
     isUpcoming(b.date, b.time) &&
@@ -426,7 +473,7 @@ export default function TeamDashboard() {
                           <div style={{ fontWeight:900, fontSize:15, fontFamily:'Barlow Condensed,sans-serif', color:'#1a202c', marginBottom:6 }}>
                             <span style={{ color:'var(--green)' }}>{myTeamName}</span>
                             <span style={{ color:'#cbd5e0', margin:'0 8px' }}>vs</span>
-                            <span>{b.opponent}</span>
+                            <span>{teamAliases.some(a => a === String(b.team||'').trim()) ? b.opponent : b.team}</span>
                           </div>
                           <div style={{ fontSize:11, color:'#8a96a8', marginBottom:4, textTransform:'uppercase', fontWeight:700 }}>
                             <i className="fas fa-building" style={{ marginRight:4 }} />{b.venue}
@@ -489,10 +536,82 @@ export default function TeamDashboard() {
             </div>
           </div>
 
+          {/* Upcoming Matches */}
+          <div className="card anim-4" style={{ marginTop: 24 }}>
+            <div className="card-hd">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <h3 style={{ margin: 0 }}>Upcoming Matches</h3>
+                {upcomingMatches.length > 0 && (
+                  <span style={{ background: 'var(--green)', color: '#fff', borderRadius: 20, padding: '2px 10px', fontSize: 12, fontWeight: 800 }}>
+                    {upcomingMatches.length}
+                  </span>
+                )}
+              </div>
+              {upcomingMatches.length > 5 && (
+                <button className="btn btn-ghost btn-sm" onClick={() => setShowAllMatches(v => !v)}>
+                  <i className={`fas fa-${showAllMatches ? 'chevron-up' : 'ellipsis'}`} /> {showAllMatches ? 'Show less' : `Show all ${upcomingMatches.length}`}
+                </button>
+              )}
+            </div>
+            <div>
+              {visibleMatches.length === 0 ? (
+                <div className="empty-state" style={{ padding: '26px 18px' }}>
+                  <i className="fas fa-futbol" />
+                  <h3>No upcoming matches</h3>
+                  <p>Accept a match request or send a challenge to schedule one.</p>
+                </div>
+              ) : visibleMatches.map(b => {
+                const daysUntil = (() => {
+                  const bDate = new Date(b.date)
+                  const today = new Date()
+                  bDate.setHours(0, 0, 0, 0)
+                  today.setHours(0, 0, 0, 0)
+                  return Math.round((bDate - today) / (1000 * 60 * 60 * 24))
+                })()
+                const urgencyColor = daysUntil === 0 ? '#e53e3e' : daysUntil <= 2 ? '#d97706' : 'var(--green)'
+                const urgencyLabel = daysUntil === 0 ? 'Today!' : daysUntil === 1 ? 'Tomorrow' : `In ${daysUntil} days`
+                return (
+                  <div key={b.id} style={{ padding: '16px 22px', borderBottom: '1px solid #f0f4f8', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 1, minWidth: 200 }}>
+                      {/* VS badge */}
+                      <div style={{ width: 44, height: 44, borderRadius: 12, background: '#f0fdf4', border: '2px solid var(--green)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 900, color: 'var(--green)', flexShrink: 0, letterSpacing: 0.5 }}>
+                        VS
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 900, fontSize: 16, fontFamily: 'Barlow Condensed,sans-serif', color: '#1a202c', marginBottom: 4 }}>
+                          <span style={{ color: 'var(--green)' }}>{myTeamName}</span>
+                          <span style={{ color: '#cbd5e0', margin: '0 8px', fontWeight: 400 }}>vs</span>
+                          <span>{b.opponent}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 12, color: '#4a5568' }}>
+                          <span><i className="fas fa-building" style={{ color: 'var(--green)', marginRight: 4 }} />{b.venue}</span>
+                          <span><i className="fas fa-calendar" style={{ color: 'var(--blue, #3b82f6)', marginRight: 4 }} />{b.date}</span>
+                          <span><i className="fas fa-clock" style={{ color: 'var(--orange)', marginRight: 4 }} />{b.time}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: urgencyColor, background: `${urgencyColor}18`, padding: '3px 10px', borderRadius: 20 }}>
+                        {urgencyLabel}
+                      </span>
+                      <span className={`badge badge-${b.status === 'confirmed' ? 'success' : b.status === 'pending' ? 'warning' : 'danger'}`}>
+                        {b.status}
+                      </span>
+                      {canUnbook(b.date) && (
+                        <button className="btn btn-outline btn-sm" onClick={() => unbook(b.id, b.venue, b.date, b.time, b.challengeId)}>
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
         </div>
       </div>
 
-      {/* Score Entry Modal */}
       {scoreModalOpen && selectedMatch && (
         <ScoreModal
           booking={selectedMatch}
