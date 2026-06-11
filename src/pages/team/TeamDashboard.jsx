@@ -72,11 +72,59 @@ export default function TeamDashboard() {
         })
 
         setBookings(prev => {
-          const existingIds = new Set(prev.map(b => String(b.id)))
+          const apiById   = new Map(apiBookings.map(b => [String(b.id), b]))
+          const apiBySlot = new Map(apiBookings.map(b => {
+            const key = [
+              String(b.team     || '').trim().toLowerCase(),
+              String(b.opponent || '').trim().toLowerCase(),
+              String(b.date     || ''),
+              String(b.time     || ''),
+              String(b.venue    || '').trim().toLowerCase(),
+            ].join('|')
+            return [key, b]
+          }))
 
-          // For match bookings, also deduplicate by team+opponent+date+time+venue slot
+          let changed = false
+
+          // Pass 1: reconcile bookings that already exist locally.
+          // When the local id is a numeric Date.now() value but the DB has
+          // assigned a real ObjectId, adopt the DB id so Pass 2 won't
+          // re-add the same booking as a duplicate (the flicker bug).
+          const updated = prev.map(existing => {
+            // First try exact id match
+            const apiMatch = apiById.get(String(existing.id))
+            if (apiMatch) {
+              if (apiMatch.status !== existing.status) {
+                changed = true
+                return { ...existing, id: apiMatch.id, status: apiMatch.status }
+              }
+              return existing
+            }
+            // Fallback: match by slot key (handles id mismatch between local & DB)
+            const slotKey = [
+              String(existing.team     || '').trim().toLowerCase(),
+              String(existing.opponent || '').trim().toLowerCase(),
+              String(existing.date     || ''),
+              String(existing.time     || ''),
+              String(existing.venue    || '').trim().toLowerCase(),
+            ].join('|')
+            const slotMatch = apiBySlot.get(slotKey)
+            if (slotMatch) {
+              // Always adopt the DB id to prevent duplicate insertion next poll
+              const idChanged     = String(existing.id) !== String(slotMatch.id)
+              const statusChanged = slotMatch.status !== existing.status
+              if (idChanged || statusChanged) {
+                changed = true
+                return { ...existing, id: slotMatch.id, status: slotMatch.status }
+              }
+            }
+            return existing
+          })
+
+          // Pass 2: add bookings from API not yet in local state
+          const existingIds   = new Set(updated.map(b => String(b.id)))
           const existingMatchSlots = new Set(
-            prev
+            updated
               .filter(b => b.opponent)
               .map(b => [
                 String(b.team     || '').trim().toLowerCase(),
@@ -102,7 +150,9 @@ export default function TeamDashboard() {
             return true
           })
 
-          return newFromApi.length > 0 ? [...prev, ...newFromApi] : prev
+          if (newFromApi.length > 0) return [...prev, ...newFromApi]
+          if (changed) return updated
+          return prev
         })
       } catch (_error) {
         // Keep local bookings if the server is unavailable.
