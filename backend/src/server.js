@@ -187,6 +187,39 @@ const start = async () => {
       console.warn('⚠️ SMTP verify check threw an error:', e.message)
     }
 
+    // ── Startup migration: backfill profileCompleted on all joined members ────
+    // When a captain approves a join request, we now persist profileCompleted=true
+    // on the User document. Older records (approved before this fix) may not have
+    // it set. This runs once on every startup and is a no-op if already correct.
+    try {
+      const User = require('./models/User')
+      const TeamJoinRequest = require('./models/TeamJoinRequest')
+      const approvedRequests = await TeamJoinRequest.find({ status: 'approved' })
+      let backfilled = 0
+      for (const req of approvedRequests) {
+        const memberUser = await User.findOne({ email: req.requesterEmail })
+        if (memberUser && !memberUser.profileCompleted) {
+          memberUser.profileCompleted = true
+          memberUser.teamAccess = memberUser.teamAccess || 'basic'
+          memberUser.isCaptain = false
+          if (!memberUser.teamInfo?.teamId) {
+            memberUser.teamInfo = {
+              teamId: req.teamId || null,
+              teamName: req.teamName || '',
+              captainName: req.captainName || '',
+            }
+          }
+          await memberUser.save()
+          backfilled++
+        }
+      }
+      if (backfilled > 0) {
+        console.log(`✅ Migration: backfilled profileCompleted for ${backfilled} joined member(s)`)
+      }
+    } catch (migrationErr) {
+      console.warn('⚠️ Member migration warning (non-fatal):', migrationErr.message)
+    }
+
     server.listen(PORT, () => {
       console.log(`✅ Backend API listening on http://localhost:${PORT}`)
       console.log(`✅ WebSocket Server ready on ws://localhost:${PORT}`)

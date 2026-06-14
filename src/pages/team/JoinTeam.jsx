@@ -57,19 +57,23 @@ export default function JoinTeam() {
         setStatus(`Welcome ${memberData.memberName || watchTarget.requesterName || 'player'}! Your request was accepted.`)
         setErr('')
 
+        // Set full member user state so they go straight to dashboard
+        // (teamProfileCompleted=true skips the choice screen on this and all future logins)
         setUser({
           id: memberData.team._id,
           uid: memberData.team.uid,
           name: memberData.memberName || watchTarget.requesterName || 'Team Member',
           email: memberData.memberEmail || watchTarget.requesterEmail,
           role: 'team',
-          teamAccess: 'basic',
+          teamAccess: 'basic',   // viewer only — no booking/editing powers
           isCaptain: false,
-          teamProfileCompleted: true,
+          teamProfileCompleted: true,  // permanent — stored in DB via approve endpoint
           eloRating: memberData.team.eloRating,
           eloMatchesPlayed: memberData.team.eloMatchesPlayed || 0,
           teamName: memberData.team.teamName || memberData.team.captainName || '',
           teamInfo: {
+            teamId: memberData.team._id,
+            uid: memberData.team.uid,
             name: memberData.team.teamName || memberData.team.captainName || '',
             teamName: memberData.team.teamName || memberData.team.captainName || '',
             captainName: memberData.team.captainName || '',

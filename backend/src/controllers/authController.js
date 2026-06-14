@@ -140,27 +140,87 @@ const login = async (req, res) => {
     await user.save()
 
     if (user.role === 'team') {
-      let team = await Team.findOne({ email: user.email })
-      let approvedMembership = null
+      // ─────────────────────────────────────────────────────────────────────────
+      // MEMBER STATUS — decided from DB-persisted User flags FIRST.
+      // These three fields are written onto the User document by the approve
+      // route the moment a captain accepts a join request, and they survive
+      // every logout, server restart, or TeamJoinRequest wipe.
+      //   • profileCompleted === true   → approved member (most reliable)
+      //   • isCaptain === false         → not the team owner
+      //   • teamAccess === 'basic'      → member-level access
+      // If ANY of these confirm membership we must route to /team, not /team/choice.
+      // ─────────────────────────────────────────────────────────────────────────
+      const userIsApprovedMember =
+        user.profileCompleted === true ||
+        (user.isCaptain === false && user.teamAccess === 'basic')
+
+      // ── Step 1: captain lookup ────────────────────────────────────────────────
+      // IMPORTANT: ignore stub Team docs created automatically at registration
+      // (teamName is empty, teamProfileCompleted is false). A user is only truly
+      // a captain once they have submitted the Create Team form (teamName is set).
+      // Without this, joined members who registered as team users would always
+      // be seen as captains because registration auto-creates an empty Team doc.
+      let team = await Team.findOne({ email: user.email, teamName: { $nin: [null, ''] } })
+      let isJoinedMember = false
+
       if (!team) {
-        approvedMembership = await TeamJoinRequest.findOne({
+        // ── Step 2: approved TeamJoinRequest ─────────────────────────────────
+        const approvedMembership = await TeamJoinRequest.findOne({
           requesterEmail: user.email,
           status: 'approved',
         }).sort({ reviewedAt: -1, createdAt: -1 })
 
         if (approvedMembership?.teamId) {
           team = await Team.findById(approvedMembership.teamId)
+          isJoinedMember = true
+        }
+
+        // ── Step 3: fallback via User.teamInfo (survives collection wipes) ────
+        if (!team && userIsApprovedMember) {
+          if (user.teamInfo?.teamId) {
+            team = await Team.findById(user.teamInfo.teamId)
+          }
+          if (!team && user.teamInfo?.uid) {
+            team = await Team.findOne({ uid: user.teamInfo.uid })
+          }
+          if (!team && user.teamInfo?.teamName) {
+            team = await Team.findOne({ teamName: user.teamInfo.teamName })
+          }
+          if (team) {
+            isJoinedMember = true
+            try {
+              const already = await TeamJoinRequest.findOne({
+                requesterEmail: user.email, teamId: team._id, status: 'approved',
+              })
+              if (!already) {
+                await TeamJoinRequest.create({
+                  teamId: team._id,
+                  teamUid: team.uid || '',
+                  teamName: team.teamName || '',
+                  captainName: team.captainName || '',
+                  captainEmail: team.email || '',
+                  requesterName: user.name,
+                  requesterEmail: user.email,
+                  message: '',
+                  status: 'approved',
+                  reviewedAt: new Date(),
+                })
+              }
+            } catch (_e) { /* non-fatal */ }
+          }
         }
       }
-      const inferredTeamAccess = user.teamAccess || (
-        user.teamInfo?.captainName && user.name && String(user.name).trim() !== String(user.teamInfo.captainName).trim()
-          ? 'basic'
-          : 'full'
-      )
-      const inferredIsCaptain = typeof user.isCaptain === 'boolean'
-        ? user.isCaptain
-        : inferredTeamAccess !== 'basic'
-      const isCaptain = team ? String(team.email).toLowerCase() === user.email : inferredIsCaptain
+
+      const isCaptain = team
+        ? (isJoinedMember ? false : String(team.email).toLowerCase() === user.email)
+        : (typeof user.isCaptain === 'boolean' ? user.isCaptain : !userIsApprovedMember)
+
+      // memberHasJoined = true when joined via any lookup path OR when the User
+      // document itself says so — even if team is null (deleted team, DB restart).
+      // This is what sets teamProfileCompleted=true on the login response, which
+      // is the single value the frontend uses to decide /team vs /team/choice.
+      const memberHasJoined = isJoinedMember || (userIsApprovedMember && !isCaptain)
+
       return res.json({
         ok: true,
         user: {
@@ -171,16 +231,19 @@ const login = async (req, res) => {
           teamInfo: {
             ...user.teamInfo,
             teamId: team?._id || user.teamInfo?.teamId || null,
-            uid: team?.uid || '',
+            uid: team?.uid || user.teamInfo?.uid || '',
             teamName: team?.teamName || team?.captainName || user.teamInfo?.teamName || user.teamInfo?.captainName || '',
             name: team?.teamName || team?.captainName || user.teamInfo?.name || user.teamInfo?.teamName || user.teamInfo?.captainName || '',
-            captainName: team?.captainName || user.teamInfo?.captainName || user.name || '',
-            location: team?.location || '',
-            district: team?.district || '',
+            captainName: team?.captainName || user.teamInfo?.captainName || '',
+            location: team?.location || user.teamInfo?.location || '',
+            district: team?.district || user.teamInfo?.district || '',
           },
-          teamAccess: team ? (isCaptain ? 'full' : 'basic') : inferredTeamAccess,
+          teamAccess: isCaptain ? 'full' : (memberHasJoined ? 'basic' : (user.teamAccess || 'full')),
           isCaptain,
-          teamProfileCompleted: team?.teamProfileCompleted || false,
+          // The single boolean the frontend reads to route /team vs /team/choice.
+          // true  → go to /team  (captain with profile done OR approved member)
+          // false → go to /team/choice (brand-new user, not yet in any team)
+          teamProfileCompleted: isCaptain ? Boolean(team?.teamProfileCompleted) : memberHasJoined,
           ownerProfile: user.ownerProfile,
           verified: user.verified,
         },

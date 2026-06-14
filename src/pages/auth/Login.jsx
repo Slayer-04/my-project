@@ -108,60 +108,104 @@ export default function Login() {
         return
       }
 
-      const teamAccess = loggedInUser.teamAccess || 'full'
+      // ── Captain path ──────────────────────────────────────────────────────────
+      // data.team is populated by the login response for captains.
       const isCaptain = loggedInUser.isCaptain !== false
-      const teamProfileCompleted = Boolean(data.team?.teamProfileCompleted)
-      const teamInfo = {
-        teamId: data.team?._id || loggedInUser.teamInfo?.teamId || null,
-        uid: formatUid(data.team?.uid || loggedInUser.teamInfo?.uid),
-        name: data.team?.teamName || loggedInUser.teamInfo?.teamName || loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
-        teamName: data.team?.teamName || loggedInUser.teamInfo?.teamName || loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
-        captainName: data.team?.captainName || loggedInUser.teamInfo?.captainName || loggedInUser.name || '',
-        location: data.team?.location || loggedInUser.teamInfo?.location || '',
-        district: data.team?.district || loggedInUser.teamInfo?.district || '',
-        skill: data.team?.skill || 'Intermediate',
-        lat: data.team?.lat,
-        lng: data.team?.lng,
-        currentElo: data.team?.eloRating || 1000,
+      if (isCaptain) {
+        const teamInfo = {
+          teamId:      data.team?._id || null,
+          uid:         formatUid(data.team?.uid),
+          name:        data.team?.teamName || '',
+          teamName:    data.team?.teamName || '',
+          captainName: data.team?.captainName || loggedInUser.name || '',
+          location:    data.team?.location || '',
+          district:    data.team?.district || '',
+          skill:       data.team?.skill || 'Intermediate',
+          lat:         data.team?.lat,
+          lng:         data.team?.lng,
+          currentElo:  data.team?.eloRating || 1000,
+        }
+        setUser({
+          id: data.team?._id || loggedInUser._id,
+          uid: teamInfo.uid,
+          name: loggedInUser.name,
+          email: loggedInUser.email,
+          role: 'team',
+          teamAccess: 'full',
+          isCaptain: true,
+          teamProfileCompleted: Boolean(data.team?.teamProfileCompleted),
+          eloRating: data.team?.eloRating || 1000,
+          eloMatchesPlayed: data.team?.eloMatchesPlayed || 0,
+          teamName: teamInfo.teamName,
+          teamInfo,
+        })
+        navigate(data.team?.teamProfileCompleted ? '/team' : '/team/choice')
+        return
       }
-      const hasJoinedTeam = Boolean(
-        teamProfileCompleted
-        || (
-          (teamAccess === 'basic' || !isCaptain)
-          && (teamInfo.teamId || teamInfo.uid || teamInfo.teamName)
-        )
-      )
 
+      // ── Member path ────────────────────────────────────────────────────────────
+      // Ask the DB directly: does an approved TeamJoinRequest exist for this email?
+      // This is the only reliable check — independent of any flags on the User doc.
+      let memberTeam = null
+      try {
+        const memberResp = await fetch(
+          `${API_BASE}/team-joins/member/${encodeURIComponent(loggedInUser.email)}`
+        )
+        if (memberResp.ok) {
+          const memberData = await memberResp.json()
+          memberTeam = memberData.team
+        }
+      } catch (_e) { /* network error — fall through to choice screen */ }
+
+      if (memberTeam) {
+        // DB confirmed membership — go straight to /team
+        const teamInfo = {
+          teamId:      memberTeam._id,
+          uid:         formatUid(memberTeam.uid),
+          name:        memberTeam.teamName || '',
+          teamName:    memberTeam.teamName || '',
+          captainName: memberTeam.captainName || '',
+          location:    memberTeam.location || '',
+          district:    memberTeam.district || '',
+          skill:       memberTeam.skill || 'Intermediate',
+          lat:         memberTeam.lat,
+          lng:         memberTeam.lng,
+          currentElo:  memberTeam.eloRating || 1000,
+        }
+        setUser({
+          id: memberTeam._id,
+          uid: teamInfo.uid,
+          name: loggedInUser.name,
+          email: loggedInUser.email,
+          role: 'team',
+          teamAccess: 'basic',
+          isCaptain: false,
+          teamProfileCompleted: true,
+          eloRating: memberTeam.eloRating || 1000,
+          eloMatchesPlayed: memberTeam.eloMatchesPlayed || 0,
+          teamName: teamInfo.teamName,
+          teamInfo,
+        })
+        navigate('/team')
+        return
+      }
+
+      // No approved membership in DB — new user, show choice screen
       setUser({
-        id: data.team?._id || loggedInUser.teamInfo?.teamId || loggedInUser._id,
-        uid: teamInfo.uid,
+        id: loggedInUser._id,
+        uid: '',
         name: loggedInUser.name,
         email: loggedInUser.email,
         role: 'team',
-        teamAccess,
-        isCaptain,
-        teamProfileCompleted,
-        eloRating: data.team?.eloRating || 1000,
-        eloMatchesPlayed: data.team?.eloMatchesPlayed || 0,
-        teamName: teamInfo.teamName,
-        teamInfo,
+        teamAccess: 'full',
+        isCaptain: false,
+        teamProfileCompleted: false,
+        eloRating: 1000,
+        eloMatchesPlayed: 0,
+        teamName: '',
+        teamInfo: {},
       })
-
-      // Show the team choice page only on the user's first login when their profile
-      // is not yet completed. Persist a per-user flag in localStorage so the
-      // choice screen isn't auto-shown again on subsequent logins.
-      try {
-        const uniqueKey = loggedInUser._id || loggedInUser.email || ''
-        const seenKey = `fotmatch.seenTeamChoice:${uniqueKey}`
-        if (!hasJoinedTeam && !localStorage.getItem(seenKey)) {
-          localStorage.setItem(seenKey, '1')
-          navigate('/team/choice')
-        } else {
-          navigate('/team')
-        }
-      } catch (_e) {
-        navigate(hasJoinedTeam ? '/team' : '/team/choice')
-      }
+      navigate('/team/choice')
     } catch (_error) {
       setErr('Unable to process login. Please try again.')
     } finally {

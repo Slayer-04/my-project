@@ -247,17 +247,24 @@ router.patch('/:id/approve', async (req, res) => {
       }
     )
 
-    // Update the user record to reflect new team membership (overwrite existing)
+    // Update the user record to reflect new team membership (overwrite existing).
+    // Fetch the Team document fresh so we always get the latest teamName, location,
+    // district etc. — not the stale snapshot stored in the join request at request time.
     try {
       const user = await User.findOne({ email: request.requesterEmail.toLowerCase() })
+      const latestTeam = await Team.findById(request.teamId).catch(() => null)
       if (user) {
         user.teamInfo = {
-          teamId: request.teamId || null,
-          teamName: request.teamName || request.teamUid || '',
-          captainName: request.captainName || '',
+          teamId:      request.teamId || null,
+          teamName:    latestTeam?.teamName  || request.teamName  || '',
+          captainName: latestTeam?.captainName || request.captainName || '',
+          location:    latestTeam?.location  || '',
+          district:    latestTeam?.district  || '',
+          uid:         latestTeam?.uid       || request.teamUid  || '',
         }
         user.teamAccess = 'basic'
         user.isCaptain = false
+        user.profileCompleted = true
         await user.save()
       }
     } catch (_e) {

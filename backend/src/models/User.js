@@ -12,6 +12,7 @@ const UserSchema = new mongoose.Schema(
     },
     teamInfo: {
       teamId: { type: mongoose.Schema.Types.ObjectId, ref: 'Team', default: null },
+      uid: { type: String, default: '', trim: true },
       teamName: { type: String, default: '', trim: true },
       captainName: { type: String, default: '', trim: true },
     },

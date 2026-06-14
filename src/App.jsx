@@ -41,17 +41,16 @@ function Guard({ role, children }) {
   return children
 }
 
+// Guards use only server-supplied user.teamProfileCompleted — no localStorage flag.
+// The server sets this to true for captains (after profile setup) AND for members
+// (as soon as their join request is approved). This means the gate works correctly
+// on any device, after clearing browser storage, or after a fresh login.
+
 function TeamProfileGuard({ children }) {
   const { user } = useAuth()
   if (!user) return <Navigate to="/login" replace />
   if (user.role !== 'team') return <Navigate to="/login" replace />
-  try {
-    const seenKey = `fotmatch.seenTeamChoice:${user.id || user.email || ''}`
-    const seen = typeof window !== 'undefined' && localStorage.getItem(seenKey)
-    if (!user.teamProfileCompleted && !seen) return <Navigate to="/team/choice" replace />
-  } catch (_e) {
-    if (!user.teamProfileCompleted) return <Navigate to="/team/choice" replace />
-  }
+  if (!user.teamProfileCompleted) return <Navigate to="/team/choice" replace />
   return children
 }
 
@@ -59,14 +58,19 @@ function TeamFeatureGuard({ children }) {
   const { user } = useAuth()
   if (!user) return <Navigate to="/login" replace />
   if (user.role !== 'team') return <Navigate to="/login" replace />
-  try {
-    const seenKey = `fotmatch.seenTeamChoice:${user.id || user.email || ''}`
-    const seen = typeof window !== 'undefined' && localStorage.getItem(seenKey)
-    if (!user.teamProfileCompleted && !seen) return <Navigate to="/team/choice" replace />
-  } catch (_e) {
-    if (!user.teamProfileCompleted) return <Navigate to="/team/choice" replace />
-  }
+  if (!user.teamProfileCompleted) return <Navigate to="/team/choice" replace />
+  // Members (basic access) can see the dashboard but not captain-only features
   if (user.teamAccess === 'basic') return <Navigate to="/team" replace />
+  return children
+}
+
+// Prevents already-joined/created users from accessing the choice or join screens.
+// If they already have a team (teamProfileCompleted=true), send them to /team instead.
+function TeamChoiceGuard({ children }) {
+  const { user } = useAuth()
+  if (!user) return <Navigate to="/login" replace />
+  if (user.role !== 'team') return <Navigate to="/login" replace />
+  if (user.teamProfileCompleted) return <Navigate to="/team" replace />
   return children
 }
 
@@ -243,8 +247,8 @@ export default function App() {
           <Route path="/team/find-match"  element={<TeamFeatureGuard><FindMatch /></TeamFeatureGuard>} />
           <Route path="/team/book-futsal" element={<TeamFeatureGuard><BookFutsal /></TeamFeatureGuard>} />
           <Route path="/team/profile"     element={<Guard role="team"><TeamProfile /></Guard>} />
-          <Route path="/team/choice"      element={<Guard role="team"><TeamChoice /></Guard>} />
-          <Route path="/team/join"        element={<Guard role="team"><JoinTeam /></Guard>} />
+          <Route path="/team/choice"      element={<TeamChoiceGuard><TeamChoice /></TeamChoiceGuard>} />
+          <Route path="/team/join"        element={<TeamChoiceGuard><JoinTeam /></TeamChoiceGuard>} />
           <Route path="/team/members"     element={<Guard role="team"><Members /></Guard>} />
 
           {/* Owner */}
