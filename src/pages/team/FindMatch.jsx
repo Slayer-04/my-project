@@ -760,7 +760,9 @@ export default function FindMatch() {
     }
     const requesterTeamName = post.requestedBy
 
-    setMatchPosts(prev => prev.map(p => p.id===post.id ? {...p, requestedBy: null, accepted: true} : p))
+    // Once accepted, the post has done its job - remove it entirely instead of
+    // just marking it, so it doesn't linger in the Find Match feed.
+    setMatchPosts(prev => prev.filter(p => p.id !== post.id))
 
     const alreadyBooked = bookings.some(booking => (
       booking.status !== 'cancelled'
@@ -910,9 +912,9 @@ export default function FindMatch() {
 
     const validation = validateCompatibility(post)
 
-    // Remove the post immediately when a team sends a match request
-    setMatchPosts(prev => prev.filter(p => p.id !== post.id))
-
+    // Local check first (fast path, avoids an obviously-doomed request), but the
+    // backend is the source of truth — it enforces this atomically so a team can
+    // never get more than one pending request through, even with stale local state.
     const challengeAlreadyExists = challenges.some(challenge => (
       challenge.from === myTeam.name
       && challenge.to === post.team
@@ -922,54 +924,61 @@ export default function FindMatch() {
       && challenge.status === 'pending'
     ))
 
-    if (!challengeAlreadyExists) {
-      const challengeId = Date.now()
-      const newChallenge = {
-        id: challengeId,
-        from: myTeam.name,
-        to: post.team,
-        date: post.date,
-        time: post.time,
-        venue: post.venue,
-        note: post.note || 'Challenge request from Find Match.',
-        status: 'pending',
-        exactSchedule: true,
-        source: 'find-match-post',
-        postId: post.id,
-      }
-
-      try {
-        const response = await fetch(`${API_BASE}/challenges`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            from: newChallenge.from,
-            to: newChallenge.to,
-            date: newChallenge.date,
-            time: newChallenge.time,
-            venue: newChallenge.venue,
-            note: newChallenge.note,
-            status: 'pending',
-          }),
-        })
-
-        const result = await response.json()
-        if (response.ok && result.challenges) {
-          const persistedChallenge = { ...newChallenge, id: result.challenges._id || challengeId }
-          setChallenges(prev => [persistedChallenge, ...prev])
-          emitChallengeCreate(persistedChallenge)
-        } else {
-          setChallenges(prev => [newChallenge, ...prev])
-          emitChallengeCreate(newChallenge)
-        }
-      } catch (_error) {
-        setChallenges(prev => [newChallenge, ...prev])
-        emitChallengeCreate(newChallenge)
-      }
+    if (challengeAlreadyExists) {
+      toast$(`You already have a pending request with ${post.team}.`, 'info')
+      return
     }
 
-    setReqModal(null)
-    toast$(validation.message || `⚡ Join request sent to ${post.team}!`, validation.message ? 'info' : 'success')
+    const challengeId = Date.now()
+    const newChallenge = {
+      id: challengeId,
+      from: myTeam.name,
+      to: post.team,
+      date: post.date,
+      time: post.time,
+      venue: post.venue,
+      note: post.note || 'Challenge request from Find Match.',
+      status: 'pending',
+      exactSchedule: true,
+      source: 'find-match-post',
+      postId: post.id,
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/challenges`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: newChallenge.from,
+          to: newChallenge.to,
+          date: newChallenge.date,
+          time: newChallenge.time,
+          venue: newChallenge.venue,
+          note: newChallenge.note,
+          status: 'pending',
+        }),
+      })
+
+      const result = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        // Backend rejected it (e.g. a duplicate pending request already exists).
+        // Do NOT remove the post or fake a local challenge in this case.
+        toast$(result.message || 'Unable to send that match request right now.', 'info')
+        return
+      }
+
+      const persistedChallenge = { ...newChallenge, id: result.challenges?._id || challengeId }
+      setChallenges(prev => [persistedChallenge, ...prev])
+      emitChallengeCreate(persistedChallenge)
+
+      // Only remove the post once the request is confirmed sent.
+      setMatchPosts(prev => prev.filter(p => p.id !== post.id))
+      setReqModal(null)
+      toast$(validation.message || `⚡ Join request sent to ${post.team}!`, validation.message ? 'info' : 'success')
+    } catch (_error) {
+      toast$('Unable to send that match request right now. Please check your connection and try again.', 'info')
+    }
   }
 
   const deletePost = (id) => {
@@ -1010,21 +1019,22 @@ export default function FindMatch() {
         }),
       })
 
-      const result = await response.json()
-      if (response.ok && result.challenges) {
-        const persistedChallenge = { ...newChallenge, id: result.challenges._id || challengeId }
-        setChallenges(prev => [persistedChallenge, ...prev])
-        emitChallengeCreate(persistedChallenge)
-      } else {
-        setChallenges(prev => [newChallenge, ...prev])
-        emitChallengeCreate(newChallenge)
-      }
-    } catch (_error) {
-      setChallenges(prev => [newChallenge, ...prev])
-      emitChallengeCreate(newChallenge)
-    }
+      const result = await response.json().catch(() => ({}))
 
-    toast$(`⚡ Request sent to ${team.name}. They will see it in Challenges and Notifications.`, 'success')
+      if (!response.ok) {
+        // e.g. a pending request already exists between these two teams —
+        // do not fabricate a local duplicate challenge in that case.
+        toast$(result.message || 'Unable to send that request right now.', 'info')
+        return
+      }
+
+      const persistedChallenge = { ...newChallenge, id: result.challenges?._id || challengeId }
+      setChallenges(prev => [persistedChallenge, ...prev])
+      emitChallengeCreate(persistedChallenge)
+      toast$(`⚡ Request sent to ${team.name}. They will see it in Challenges and Notifications.`, 'success')
+    } catch (_error) {
+      toast$('Unable to send that request right now. Please check your connection and try again.')
+    }
   }
 
   return (

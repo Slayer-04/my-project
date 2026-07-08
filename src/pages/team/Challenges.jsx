@@ -63,31 +63,66 @@ export default function Challenges() {
     }
   }
 
-  const send = () => {
+  const send = async () => {
     if (!canManageTeam) {
       toast$('Only the captain can send challenges.')
       return
     }
 
     if (!form.team || !form.date || !form.time) return
+
+    // Local fast-path check (the backend is the real source of truth and
+    // enforces this with a DB-level unique index, so a duplicate can never
+    // slip through even if this local state is stale).
+    const alreadyPending = list.some(c => (
+      c.status === 'pending'
+      && ((c.from === myTeamName && c.to === form.team) || (c.from === form.team && c.to === myTeamName))
+    ))
+    if (alreadyPending) {
+      toast$(`You already have a pending challenge with ${form.team}.`)
+      return
+    }
+
     const challengeId = Date.now()
-    setChallenges(prev => [{
+    const newChallenge = {
       id: challengeId,
       from: myTeamName, to: form.team,
       date: form.date, time: form.time,
       venue: form.venue, note: form.note,
       status: 'pending',
-    }, ...prev])
-    setNotifications(prev => [{
-      id: Date.now(),
-      challengeId,
-      type: 'challenge-request',
-      text: `${myTeamName} challenged your team!`,
-      time: 'just now',
-      unread: true,
-      team: form.team,
-      createdAt: new Date().toISOString(),
-    }, ...prev])
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/challenges`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: newChallenge.from,
+          to: newChallenge.to,
+          date: newChallenge.date,
+          time: newChallenge.time,
+          venue: newChallenge.venue,
+          note: newChallenge.note,
+          status: 'pending',
+        }),
+      })
+
+      const result = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        // Backend rejected it - most likely a duplicate pending challenge
+        // already exists between these two teams. Don't fake it locally.
+        toast$(result.message || 'Unable to send that challenge right now.')
+        return
+      }
+
+      const persistedChallenge = { ...newChallenge, id: result.challenge?._id || result.challenges?._id || challengeId }
+      setChallenges(prev => [persistedChallenge, ...prev])
+    } catch (_error) {
+      toast$('Unable to send that challenge right now. Please check your connection and try again.')
+      return
+    }
+
     setModal(false)
     setForm({ team:'', date:'', time:'', venue:'Arena Futsal Park', note:'' })
     toast$(`🏆 Challenge sent to ${form.team}!`)

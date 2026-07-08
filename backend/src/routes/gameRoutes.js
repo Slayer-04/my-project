@@ -18,7 +18,7 @@ function createCrudRoutes({ path, label, model, createValidator, updateValidator
 
   router.post(path, async (req, res) => {
     try {
-      const validation = createValidator(req.body || {})
+      const validation = await createValidator(req.body || {})
       if (!validation.ok) {
         return res.status(400).json({ message: validation.message })
       }
@@ -26,6 +26,13 @@ function createCrudRoutes({ path, label, model, createValidator, updateValidator
       const record = await model.create(validation.data)
       return res.status(201).json({ message: `${label} created successfully.`, [path.slice(1)]: record })
     } catch (error) {
+      // A duplicate-key error here means a unique index (e.g. one pending
+      // challenge per team pair, or one confirmed booking per team/slot)
+      // blocked the write. Report it as a normal validation failure rather
+      // than a server error.
+      if (error && error.code === 11000) {
+        return res.status(409).json({ message: `That ${label} already exists or conflicts with an existing one.` })
+      }
       return res.status(500).json({ message: `Failed to create ${label}.`, error: error.message })
     }
   })
@@ -52,6 +59,9 @@ function createCrudRoutes({ path, label, model, createValidator, updateValidator
 
       return res.json({ message: `${label} updated successfully.`, [label]: record })
     } catch (error) {
+      if (error && error.code === 11000) {
+        return res.status(409).json({ message: `That ${label} conflicts with an existing record.` })
+      }
       return res.status(500).json({ message: `Failed to update ${label}.`, error: error.message })
     }
   })
@@ -167,16 +177,18 @@ createCrudRoutes({
   path: '/challenges',
   label: 'challenge',
   model: Challenge,
-  createValidator: (body) => {
+  createValidator: async (body) => {
     const requiredFields = ['from', 'to', 'date', 'time', 'venue']
     for (const field of requiredFields) {
       const error = validateString(body[field], field)
       if (error) return { ok: false, message: error }
     }
 
+    const from = body.from.trim()
+    const to = body.to.trim()
+
     // Guard: never allow a self-challenge
-    if (body.from && body.to &&
-        body.from.trim().toLowerCase() === body.to.trim().toLowerCase()) {
+    if (from.toLowerCase() === to.toLowerCase()) {
       return { ok: false, message: 'A team cannot challenge itself.' }
     }
 
@@ -184,16 +196,31 @@ createCrudRoutes({
       return { ok: false, message: 'status must be pending, accepted, declined, or cancelled.' }
     }
 
+    const pairKey = [from.toLowerCase(), to.toLowerCase()].sort().join('::')
+
+    // Guard: only one pending challenge is allowed between the same two teams at a
+    // time, no matter who challenges whom. This is a defense-in-depth check on top
+    // of the DB-level unique index on { pairKey, status } — it lets us return a
+    // clear, friendly message instead of a raw duplicate-key error in the common case.
+    const existingPending = await Challenge.findOne({ pairKey, status: 'pending' })
+    if (existingPending) {
+      return {
+        ok: false,
+        message: `There is already a pending match request between ${existingPending.from} and ${existingPending.to}. Wait for a response before sending another.`,
+      }
+    }
+
     return {
       ok: true,
       data: {
-        from: body.from.trim(),
-        to: body.to.trim(),
+        from,
+        to,
         date: body.date.trim(),
         time: body.time.trim(),
         venue: body.venue.trim(),
         status: body.status || 'pending',
         note: typeof body.note === 'string' ? body.note.trim() : '',
+        pairKey,
       },
     }
   },
@@ -236,31 +263,49 @@ createCrudRoutes({
       }
 
       sideEffect = async () => {
-        // Check if bookings already exist for this slot
-        const existing = await Booking.findOne({
-          date,
-          time,
-          venue,
-          status: { $ne: 'cancelled' },
-          $or: [
-            { team: fromTeam, opponent: toTeam },
-            { team: toTeam,   opponent: fromTeam },
-          ],
-        })
-
-        if (!existing) {
-          const base = {
-            date, time, venue,
-            status:      'confirmed',
-            players:     11,
-            amount:      'Rs. 1,200',
-            challengeId,
-          }
-          await Promise.all([
-            Booking.create({ ...base, team: toTeam,   opponent: fromTeam }),
-            Booking.create({ ...base, team: fromTeam, opponent: toTeam   }),
-          ])
+        const base = {
+          date, time, venue,
+          status:      'confirmed',
+          players:     11,
+          amount:      'Rs. 1,200',
+          challengeId,
         }
+
+        // Create (or confirm) each team's own booking independently. This is
+        // deliberately NOT a single Promise.all([...]) over both inserts:
+        // both bookings share the same venue/date/time, and if anything ever
+        // races or a duplicate-key error occurs on one insert, the two calls
+        // must not be able to take each other down. Each side is self-healing:
+        // if a team is missing its booking for this match (e.g. from a past
+        // partial failure), it gets created now.
+        const ensureBookingFor = async (teamName, opponentName) => {
+          const existingForTeam = await Booking.findOne({
+            team: teamName,
+            opponent: opponentName,
+            date,
+            time,
+            venue,
+            status: { $ne: 'cancelled' },
+          })
+          if (existingForTeam) return existingForTeam
+
+          try {
+            return await Booking.create({ ...base, team: teamName, opponent: opponentName })
+          } catch (error) {
+            if (error && error.code === 11000) {
+              // Another confirmed booking for this exact team/venue/date/time
+              // already exists (shouldn't normally happen once opponent is
+              // included in the lookup above, but guards against stale data).
+              return Booking.findOne({ team: teamName, venue, date, time, status: 'confirmed' })
+            }
+            throw error
+          }
+        }
+
+        await Promise.all([
+          ensureBookingFor(toTeam, fromTeam),
+          ensureBookingFor(fromTeam, toTeam),
+        ])
 
         // Notify the challenger that their challenge was accepted
         try {
