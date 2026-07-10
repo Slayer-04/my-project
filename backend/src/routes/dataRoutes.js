@@ -7,6 +7,7 @@ const Venue = require('../models/Venue')
 const User = require('../models/User')
 const Team = require('../models/Team')
 const MatchResult = require('../models/MatchResult')
+const { expirePostsForSlot } = require('../utils/slotAvailability')
 
 const router = express.Router()
 
@@ -395,7 +396,24 @@ router.post('/bookings/:id/confirm', async (req, res) => {
     }
 
     booking.status = 'confirmed'
-    await booking.save()
+
+    try {
+      await booking.save()
+    } catch (error) {
+      if (error && error.code === 11000) {
+        return res.status(409).json({ message: 'This slot was just confirmed for another booking.' })
+      }
+      throw error
+    }
+
+    // A confirmed booking claims this slot exclusively — remove any Find Match
+    // post still pointing at it so it doesn't linger, offering a slot that no
+    // longer exists.
+    try {
+      await expirePostsForSlot({ venue: booking.venue, date: booking.date, time: booking.time })
+    } catch (_expireError) {
+      // Never let this cleanup failure block a successful confirmation.
+    }
 
     await createBookingStatusNotification(
       booking,

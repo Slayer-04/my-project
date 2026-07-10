@@ -3,6 +3,7 @@ const Booking = require('../models/Booking')
 const Challenge = require('../models/Challenge')
 const Match = require('../models/Match')
 const Notification = require('../models/Notification')
+const { expirePostsForSlot, resolveVenueName, getVenueOwnerInfo, notifyVenueOwnerOfMatch } = require('../utils/slotAvailability')
 
 const router = express.Router()
 
@@ -263,12 +264,22 @@ createCrudRoutes({
       }
 
       sideEffect = async () => {
+        // Resolve to the venue's canonical name so this booking is comparable
+        // against bookings created via any other flow (direct venue booking,
+        // Find Match posts, etc) that might use a differently-formatted venue
+        // string for the same physical venue.
+        const canonicalVenue = await resolveVenueName(venue)
+        const venueOwnerInfo = await getVenueOwnerInfo(canonicalVenue)
+
         const base = {
-          date, time, venue,
+          date, time, venue: canonicalVenue,
           status:      'confirmed',
           players:     11,
           amount:      'Rs. 1,200',
           challengeId,
+          venueId:    venueOwnerInfo.venueId,
+          ownerName:  venueOwnerInfo.ownerName,
+          ownerEmail: venueOwnerInfo.ownerEmail,
         }
 
         // Create (or confirm) each team's own booking independently. This is
@@ -278,40 +289,61 @@ createCrudRoutes({
         // must not be able to take each other down. Each side is self-healing:
         // if a team is missing its booking for this match (e.g. from a past
         // partial failure), it gets created now.
-        const ensureBookingFor = async (teamName, opponentName) => {
+        //
+        // Exactly one side is marked `role: 'primary'` — that's the document
+        // the global venue/date/time unique index enforces exclusivity on, so
+        // no third team (or a direct venue booking) can ever claim this same
+        // slot once either side of this match exists.
+        const ensureBookingFor = async (teamName, opponentName, role) => {
           const existingForTeam = await Booking.findOne({
             team: teamName,
             opponent: opponentName,
             date,
             time,
-            venue,
+            venue: canonicalVenue,
             status: { $ne: 'cancelled' },
           })
           if (existingForTeam) return existingForTeam
 
           try {
-            return await Booking.create({ ...base, team: teamName, opponent: opponentName })
+            return await Booking.create({ ...base, team: teamName, opponent: opponentName, role })
           } catch (error) {
             if (error && error.code === 11000) {
               // Another confirmed booking for this exact team/venue/date/time
               // already exists (shouldn't normally happen once opponent is
               // included in the lookup above, but guards against stale data).
-              return Booking.findOne({ team: teamName, venue, date, time, status: 'confirmed' })
+              return Booking.findOne({ team: teamName, venue: canonicalVenue, date, time, status: 'confirmed' })
             }
             throw error
           }
         }
 
         await Promise.all([
-          ensureBookingFor(toTeam, fromTeam),
-          ensureBookingFor(fromTeam, toTeam),
+          ensureBookingFor(toTeam, fromTeam, 'primary'),
+          ensureBookingFor(fromTeam, toTeam, 'secondary'),
         ])
+
+        // Any other open/requested Find-Match post pointing at this exact
+        // slot is no longer valid now that it's booked — expire it so it
+        // disappears from every team's board immediately.
+        try {
+          await expirePostsForSlot({ venue: canonicalVenue, date, time })
+        } catch (_expireError) {
+          // Never let a cleanup failure block the challenge acceptance itself.
+        }
+
+        // Let the venue owner know two teams are now confirmed at their court.
+        try {
+          await notifyVenueOwnerOfMatch({ venueName: canonicalVenue, teamA: toTeam, teamB: fromTeam, date, time })
+        } catch (_ownerNotifError) {
+          // Best-effort - never block the challenge acceptance itself.
+        }
 
         // Notify the challenger that their challenge was accepted
         try {
           await Notification.create({
             team:        fromTeam,
-            text:        `${toTeam} accepted your challenge! Match on ${date} at ${time} (${venue}).`,
+            text:        `${toTeam} accepted your challenge! Match on ${date} at ${time} (${canonicalVenue}).`,
             type:        'match-update',
             challengeId: challengeId,
             unread:      true,

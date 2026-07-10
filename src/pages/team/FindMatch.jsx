@@ -568,6 +568,55 @@ export default function FindMatch() {
     }
   }, [])
 
+  // Match posts now live on the backend (MatchPost model) so that availability
+  // and expiry are enforced consistently for every team, not just the browser
+  // that created the post. Poll it, same pattern as venues/teams above.
+  useEffect(() => {
+    let active = true
+
+    const mapPostFromApi = (post) => ({
+      id: post._id || post.id,
+      team: post.team,
+      venue: post.venue,
+      date: post.date,
+      time: post.time,
+      players: post.players || 8,
+      note: post.note || '',
+      color: 'green',
+      emoji: '🦅',
+      elo: null,
+      location: '',
+      status: post.status,
+      requestedBy: post.requestedBy || null,
+      challengeId: post.challengeId || null,
+      visibility: post.visibilityHours,
+    })
+
+    const loadMatchPosts = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/match-posts`)
+        const data = await response.json()
+
+        if (!response.ok || !Array.isArray(data)) {
+          throw new Error('Failed to load match posts')
+        }
+
+        if (!active) return
+        setMatchPosts(data.map(mapPostFromApi))
+      } catch (_error) {
+        // Keep whatever is already in state if the fetch fails momentarily.
+      }
+    }
+
+    loadMatchPosts()
+    const pollId = setInterval(loadMatchPosts, 5000)
+
+    return () => {
+      active = false
+      clearInterval(pollId)
+    }
+  }, [setMatchPosts])
+
   // Listen for challenge creations from other teams
   useEffect(() => {
     const unsubscribe = onChallengeCreated((challengeData) => {
@@ -639,6 +688,7 @@ export default function FindMatch() {
           postedVenue: post.venue,
           postedTime: post.time || '',
           postedDate: post.date || '',
+          matchPostId: post.id,
         }
       })
   }, [safeMatchPosts, teams, myTeam.name])
@@ -688,7 +738,38 @@ export default function FindMatch() {
     return visiblePosts.slice(0, 3)
   }, [showAllPosts, visiblePosts])
 
-  const submitPost = () => {
+  const resolveVenueNameLocal = (venueInput) => {
+    const raw = String(venueInput || '').trim()
+    if (!raw) return raw
+
+    const lower = raw.toLowerCase()
+    const exactMatch = venueOptions.find(v => v.name.toLowerCase() === lower || v.label.toLowerCase() === lower)
+    if (exactMatch) return exactMatch.name
+
+    if (raw.includes(' - ')) {
+      const namePart = raw.split(' - ')[0].trim().toLowerCase()
+      const byNamePart = venueOptions.find(v => v.name.toLowerCase() === namePart)
+      if (byNamePart) return byNamePart.name
+    }
+
+    return raw
+  }
+
+  const bookedTimesForSelectedSlot = useMemo(() => {
+    if (!form.venue || !form.date) return new Set()
+    const canonicalVenue = resolveVenueNameLocal(form.venue)
+    return new Set(
+      bookings
+        .filter(b => b.status === 'confirmed' && b.venue === canonicalVenue && b.date === form.date)
+        .map(b => b.time)
+    )
+  }, [bookings, form.venue, form.date, venueOptions])
+
+  const availablePostTimes = useMemo(() => (
+    POST_TIMES.filter(t => !bookedTimesForSelectedSlot.has(t))
+  ), [bookedTimesForSelectedSlot])
+
+  const submitPost = async () => {
     if (!canManageTeam) {
       toast$('Only the captain can post matches.', 'info')
       return
@@ -699,23 +780,65 @@ export default function FindMatch() {
       return
     }
 
-    const newPost = {
-      id: Date.now(),
-      team: myTeam.name, emoji: '🦅', elo: myTeam.elo,
-      location: myTeam.location, date: form.date, time: form.time,
-      venue: form.venue, players: 8, note: form.note || 'Open for any match!',
-      color: 'green', requestedBy: null, visibility: form.visibility,
+    // Fast local check — the backend re-validates this for real before creating the post.
+    if (bookedTimesForSelectedSlot.has(form.time)) {
+      toast$(`${form.time} on ${form.date} is already booked at that venue. Please pick another time.`, 'info')
+      return
     }
-    setMatchPosts(prev => [newPost, ...prev])
-    setPostModal(false)
-    setForm({
-      date:'',
-      time:'',
-      venue:'',
-      note:'',
-      visibility:'24',
-    })
-    toast$('📣 Your match post is live! Teams can now request you.')
+
+    try {
+      const response = await fetch(`${API_BASE}/match-posts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          team: myTeam.name,
+          venue: resolveVenueNameLocal(form.venue),
+          date: form.date,
+          time: form.time,
+          players: 8,
+          note: form.note || 'Open for any match!',
+          visibilityHours: Number(form.visibility) || 24,
+        }),
+      })
+
+      const result = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        // e.g. the slot was booked by someone else moments ago.
+        toast$(result.message || 'Unable to create that match post right now.', 'info')
+        return
+      }
+
+      const created = result.matchPost
+      setMatchPosts(prev => [{
+        id: created._id || created.id,
+        team: created.team,
+        venue: created.venue,
+        date: created.date,
+        time: created.time,
+        players: created.players || 8,
+        note: created.note || '',
+        color: 'green',
+        emoji: '🦅',
+        elo: myTeam.elo,
+        location: myTeam.location,
+        status: created.status,
+        requestedBy: null,
+        visibility: created.visibilityHours,
+      }, ...prev])
+
+      setPostModal(false)
+      setForm({
+        date:'',
+        time:'',
+        venue:'',
+        note:'',
+        visibility:'24',
+      })
+      toast$('📣 Your match post is live! Teams can now request you.')
+    } catch (_error) {
+      toast$('Unable to create that match post right now. Please check your connection and try again.', 'info')
+    }
   }
 
   const validateCompatibility = (opponent) => {
@@ -739,9 +862,12 @@ export default function FindMatch() {
   // Helper: normalise a MongoDB ObjectId or numeric id to a plain string for comparison
   const resolveId = (value) => String(value || '').trim()
 
-  // ─── FIX 1: acceptRequest — guard against self-match ────────────────────────
-  // When the post owner accepts, create bookings only if the two teams are different.
-  // Also add a notification for the requesting team so they see the confirmation.
+  // Accepting now happens entirely on the backend in one atomic call:
+  // POST /match-posts/:id/accept re-checks the slot is still free, books it
+  // for both teams, marks the challenge accepted, and removes the post — all
+  // in a single transaction (with a race-safe fallback if the DB doesn't
+  // support multi-document transactions). If the slot was taken by someone
+  // else in the meantime, the backend expires the post and tells us why.
   const acceptRequest = async (post) => {
     if (!canManageTeam) {
       toast$('Only the captain can accept match requests.', 'info')
@@ -750,155 +876,72 @@ export default function FindMatch() {
 
     if (!post?.requestedBy) return
 
-    // Guard: never accept a request where the requester is the same as the post owner
-    if (
-      !post.requestedBy ||
-      normalizeTeamKey(post.requestedBy) === normalizeTeamKey(myTeam.name)
-    ) {
+    if (normalizeTeamKey(post.requestedBy) === normalizeTeamKey(myTeam.name)) {
       toast$('Cannot create a match against your own team.', 'info')
       return
     }
-    const requesterTeamName = post.requestedBy
 
-    // Once accepted, the post has done its job - remove it entirely instead of
-    // just marking it, so it doesn't linger in the Find Match feed.
-    setMatchPosts(prev => prev.filter(p => p.id !== post.id))
+    try {
+      const response = await fetch(`${API_BASE}/match-posts/${post.id}/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
 
-    const alreadyBooked = bookings.some(booking => (
-      booking.status !== 'cancelled'
-      && booking.date === post.date
-      && booking.time === post.time
-      && booking.venue === post.venue
-      && (
-        (booking.team === myTeam.name && booking.opponent === post.requestedBy)
-        || (booking.team === post.requestedBy && booking.opponent === myTeam.name)
-      )
-    ))
+      const result = await response.json().catch(() => ({}))
 
-    if (!alreadyBooked) {
-      const baseBookingId = Date.now()
-      setBookings(prev => [
-        // Booking for the post owner (acceptor)
-        {
-          id: baseBookingId,
-          team: myTeam.name,
-          venue: post.venue,
-          date: post.date,
-          time: post.time,
-          status: 'confirmed',
-          players: post.players || 8,
-          amount: 'Rs. 1,200',
-          opponent: post.requestedBy,
-          source: 'find-match-post',
-          postId: post.id,
-        },
-        // Booking for the requesting team (so their dashboard shows the match too)
-        {
-          id: baseBookingId + 1,
-          team: post.requestedBy,
-          venue: post.venue,
-          date: post.date,
-          time: post.time,
-          status: 'confirmed',
-          players: post.players || 8,
-          amount: 'Rs. 1,200',
-          opponent: myTeam.name,
-          source: 'find-match-post',
-          postId: post.id,
-        },
-        ...prev,
-      ])
+      if (!response.ok) {
+        // Slot got booked by someone else, post already gone, etc.
+        setMatchPosts(prev => prev.filter(p => p.id !== post.id))
+        toast$(result.message || 'Unable to accept that match right now.', 'info')
+        return
+      }
+
+      // Success — the post is gone server-side; drop it locally too, and let
+      // the next bookings/challenges poll pick up the two new confirmed bookings.
+      setMatchPosts(prev => prev.filter(p => p.id !== post.id))
+      setChallenges(prev => prev.map(challenge => (
+        resolveId(challenge._id || challenge.id) === resolveId(post.challengeId)
+          ? { ...challenge, status: 'accepted' }
+          : challenge
+      )))
+
+      toast$('✅ Match accepted and booked for both teams.')
+    } catch (_error) {
+      toast$('Unable to accept that match right now. Please check your connection and try again.', 'info')
     }
-
-    // Find and update the matching challenge on the backend
-    const matchingChallenge = challenges.find(challenge => (
-      challenge.status === 'pending'
-      && challenge.from === post.requestedBy
-      && challenge.to === myTeam.name
-      && challenge.date === post.date
-      && challenge.venue === post.venue
-    ))
-
-    if (matchingChallenge) {
-      const challengeId = matchingChallenge._id || matchingChallenge.id
-      try {
-        await fetch(`${API_BASE}/challenges/${challengeId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'accepted' }),
-        })
-      } catch (_error) {
-        // Ignore network errors
-      }
-
-      // Find and update matching notifications in backend DB
-      const targetNotif = (notifications || []).find(notification => (
-        notification.type === 'challenge-request'
-        && resolveId(notification.challengeId) === resolveId(challengeId)
-      ))
-
-      if (targetNotif && (targetNotif._id || targetNotif.id)) {
-        const dbId = targetNotif._id || targetNotif.id
-        const isDbId = /^[0-9a-fA-F]{24}$/.test(dbId)
-        if (isDbId) {
-          try {
-            await fetch(`${API_BASE}/notifications/${dbId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ unread: false }),
-            })
-          } catch (_e) {
-            // Ignore
-          }
-        }
-      }
-    }
-
-    setChallenges(prev => prev.map(challenge => {
-      const isMatchingChallenge = challenge.status === 'pending'
-        && challenge.from === post.requestedBy
-        && challenge.to === myTeam.name
-        && challenge.date === post.date
-        && challenge.venue === post.venue
-
-      if (!isMatchingChallenge) return challenge
-
-      return {
-        ...challenge,
-        status: 'accepted',
-        date: post.date,
-        time: post.time,
-        venue: post.venue,
-        exactSchedule: true,
-        source: 'find-match-post',
-      }
-    }))
-
-    // Notify the post owner's feed
-    setNotifications(prev => [{
-      id: Date.now(),
-      text: `You accepted ${post.requestedBy}'s match request. ${post.date} at ${post.time} (${post.venue}).`,
-      time: 'just now',
-      unread: true,
-      team: myTeam.name,
-      type: 'match-update',
-      createdAt: new Date().toISOString(),
-    },
-    // ── FIX 2: also notify the requesting team so they see the accepted match ──
-    {
-      id: Date.now() + 1,
-      text: `${myTeam.name} accepted your match request. ${post.date} at ${post.time} (${post.venue}).`,
-      time: 'just now',
-      unread: true,
-      team: post.requestedBy,         // targeted at the sender's team
-      type: 'match-update',
-      createdAt: new Date().toISOString(),
-    }, ...prev])
-
-    toast$('✅ Match accepted and added to Upcoming Bookings.')
   }
 
- const sendRequest = async (post) => {
+  const declineRequest = async (post) => {
+    if (!canManageTeam) {
+      toast$('Only the captain can decline match requests.', 'info')
+      return
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/match-posts/${post.id}/decline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+
+      const result = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        toast$(result.message || 'Unable to decline that request right now.', 'info')
+        return
+      }
+
+      const updated = result.matchPost
+      if (updated?.status === 'expired') {
+        setMatchPosts(prev => prev.filter(p => p.id !== post.id))
+      } else {
+        setMatchPosts(prev => prev.map(p => p.id === post.id ? { ...p, requestedBy: null, status: 'open' } : p))
+      }
+    } catch (_error) {
+      toast$('Unable to decline that request right now. Please check your connection and try again.', 'info')
+    }
+  }
+
+  const sendRequest = async (post) => {
     if (!canManageTeam) {
       toast$('Only the captain can send match requests.', 'info')
       return
@@ -912,68 +955,42 @@ export default function FindMatch() {
 
     const validation = validateCompatibility(post)
 
-    // Local check first (fast path, avoids an obviously-doomed request), but the
-    // backend is the source of truth — it enforces this atomically so a team can
-    // never get more than one pending request through, even with stale local state.
-    const challengeAlreadyExists = challenges.some(challenge => (
-      challenge.from === myTeam.name
-      && challenge.to === post.team
-      && challenge.date === post.date
-      && challenge.time === post.time
-      && challenge.venue === post.venue
-      && challenge.status === 'pending'
-    ))
-
-    if (challengeAlreadyExists) {
-      toast$(`You already have a pending request with ${post.team}.`, 'info')
-      return
-    }
-
-    const challengeId = Date.now()
-    const newChallenge = {
-      id: challengeId,
-      from: myTeam.name,
-      to: post.team,
-      date: post.date,
-      time: post.time,
-      venue: post.venue,
-      note: post.note || 'Challenge request from Find Match.',
-      status: 'pending',
-      exactSchedule: true,
-      source: 'find-match-post',
-      postId: post.id,
-    }
-
     try {
-      const response = await fetch(`${API_BASE}/challenges`, {
+      const response = await fetch(`${API_BASE}/match-posts/${post.id}/request`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: newChallenge.from,
-          to: newChallenge.to,
-          date: newChallenge.date,
-          time: newChallenge.time,
-          venue: newChallenge.venue,
-          note: newChallenge.note,
-          status: 'pending',
-        }),
+        body: JSON.stringify({ requestedBy: myTeam.name }),
       })
 
       const result = await response.json().catch(() => ({}))
 
       if (!response.ok) {
-        // Backend rejected it (e.g. a duplicate pending request already exists).
-        // Do NOT remove the post or fake a local challenge in this case.
+        // Backend rejected it (duplicate pending request, slot no longer
+        // available, etc). If the slot is gone, drop the post locally too.
+        if (response.status === 409 && /booked|available/i.test(String(result.message || ''))) {
+          setMatchPosts(prev => prev.filter(p => p.id !== post.id))
+        }
         toast$(result.message || 'Unable to send that match request right now.', 'info')
         return
       }
 
-      const persistedChallenge = { ...newChallenge, id: result.challenges?._id || challengeId }
-      setChallenges(prev => [persistedChallenge, ...prev])
-      emitChallengeCreate(persistedChallenge)
+      if (result.challenge) {
+        emitChallengeCreate({
+          id: result.challenge._id,
+          from: result.challenge.from,
+          to: result.challenge.to,
+          date: result.challenge.date,
+          time: result.challenge.time,
+          venue: result.challenge.venue,
+          note: result.challenge.note,
+          status: result.challenge.status,
+        })
+        setChallenges(prev => [{ ...result.challenge, id: result.challenge._id }, ...prev])
+      }
 
-      // Only remove the post once the request is confirmed sent.
-      setMatchPosts(prev => prev.filter(p => p.id !== post.id))
+      setMatchPosts(prev => prev.map(p => (
+        p.id === post.id ? { ...p, status: 'requested', requestedBy: myTeam.name } : p
+      )))
       setReqModal(null)
       toast$(validation.message || `⚡ Join request sent to ${post.team}!`, validation.message ? 'info' : 'success')
     } catch (_error) {
@@ -981,8 +998,15 @@ export default function FindMatch() {
     }
   }
 
-  const deletePost = (id) => {
-    setMatchPosts(prev => prev.filter(p => p.id!==id))
+  const deletePost = async (id) => {
+    setMatchPosts(prev => prev.filter(p => p.id !== id))
+    try {
+      await fetch(`${API_BASE}/match-posts/${id}`, { method: 'DELETE' })
+    } catch (_error) {
+      // The post is already gone from the UI; a failed network call here
+      // just means it may reappear on the next poll, which is an acceptable
+      // fallback rather than blocking the user on a delete confirmation.
+    }
     toast$('Post removed.', 'info')
   }
 
@@ -992,45 +1016,45 @@ export default function FindMatch() {
       return
     }
 
-    const challengeId = Date.now()
-    const newChallenge = {
-      id: challengeId,
-      from: myTeam.name,
-      to: team.name,
-      date: team.proposedDate || toIsoDate(1),
-      time: team.proposedTime || '06:00 PM',
-      venue: team.proposedVenue || matchContext.venue,
-      note: 'Manual challenge from team recommendation panel.',
-      status: 'pending',
+    if (!team.matchPostId) {
+      toast$('Unable to send that request right now.', 'info')
+      return
     }
 
     try {
-      const response = await fetch(`${API_BASE}/challenges`, {
+      const response = await fetch(`${API_BASE}/match-posts/${team.matchPostId}/request`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: newChallenge.from,
-          to: newChallenge.to,
-          date: newChallenge.date,
-          time: newChallenge.time,
-          venue: newChallenge.venue,
-          note: newChallenge.note,
-          status: 'pending',
-        }),
+        body: JSON.stringify({ requestedBy: myTeam.name }),
       })
 
       const result = await response.json().catch(() => ({}))
 
       if (!response.ok) {
-        // e.g. a pending request already exists between these two teams —
-        // do not fabricate a local duplicate challenge in that case.
+        if (response.status === 409 && /booked|available/i.test(String(result.message || ''))) {
+          setMatchPosts(prev => prev.filter(p => p.id !== team.matchPostId))
+        }
         toast$(result.message || 'Unable to send that request right now.', 'info')
         return
       }
 
-      const persistedChallenge = { ...newChallenge, id: result.challenges?._id || challengeId }
-      setChallenges(prev => [persistedChallenge, ...prev])
-      emitChallengeCreate(persistedChallenge)
+      if (result.challenge) {
+        emitChallengeCreate({
+          id: result.challenge._id,
+          from: result.challenge.from,
+          to: result.challenge.to,
+          date: result.challenge.date,
+          time: result.challenge.time,
+          venue: result.challenge.venue,
+          note: result.challenge.note,
+          status: result.challenge.status,
+        })
+        setChallenges(prev => [{ ...result.challenge, id: result.challenge._id }, ...prev])
+      }
+
+      setMatchPosts(prev => prev.map(p => (
+        p.id === team.matchPostId ? { ...p, status: 'requested', requestedBy: myTeam.name } : p
+      )))
       toast$(`⚡ Request sent to ${team.name}. They will see it in Challenges and Notifications.`, 'success')
     } catch (_error) {
       toast$('Unable to send that request right now. Please check your connection and try again.')
@@ -1216,7 +1240,7 @@ export default function FindMatch() {
                                 <button className="btn btn-primary btn-sm" onClick={() => acceptRequest(post)}>
                                   <i className="fas fa-check" /> Accept
                                 </button>
-                                <button className="btn btn-outline btn-sm" onClick={() => setMatchPosts(prev => prev.map(p => p.id===post.id ? {...p,requestedBy:null} : p))}>
+                                <button className="btn btn-outline btn-sm" onClick={() => declineRequest(post)}>
                                   Decline
                                 </button>
                               </div>
@@ -1279,9 +1303,19 @@ export default function FindMatch() {
               <div className="form-group">
                 <label className="form-label">Exact Time</label>
                 <select className="form-control" value={form.time} onChange={e => setForm({...form,time:e.target.value})}>
-                  <option value="">Select time</option>
-                  {POST_TIMES.map(timeOption => <option key={timeOption} value={timeOption}>{timeOption}</option>)}
+                  <option value="">{form.venue && form.date ? 'Select an available time' : 'Select venue and date first'}</option>
+                  {availablePostTimes.map(timeOption => <option key={timeOption} value={timeOption}>{timeOption}</option>)}
                 </select>
+                {form.venue && form.date && availablePostTimes.length === 0 && (
+                  <div style={{ fontSize:12, color:'#b91c1c', marginTop:6 }}>
+                    No open time slots left for this venue on this date.
+                  </div>
+                )}
+                {form.venue && form.date && availablePostTimes.length < POST_TIMES.length && availablePostTimes.length > 0 && (
+                  <div style={{ fontSize:12, color:'#8a96a8', marginTop:6 }}>
+                    Already-booked times for this venue/date are hidden.
+                  </div>
+                )}
               </div>
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>

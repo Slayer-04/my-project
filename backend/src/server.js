@@ -9,6 +9,7 @@ const teamRoutes = require('./routes/teamRoutes')
 const teamJoinRoutes = require('./routes/teamJoinRoutes')
 const gameRoutes = require('./routes/gameRoutes')
 const dataRoutes = require('./routes/dataRoutes')
+const matchPostRoutes = require('./routes/matchPostRoutes')
 const authRoutes = require('./routes/authRoutes')
 const { verifyTransport } = require('./utils/emailUtils')
 
@@ -37,6 +38,7 @@ app.use('/api/teams', teamRoutes)
 app.use('/api/team-joins', teamJoinRoutes)
 app.use('/api', gameRoutes)
 app.use('/api', dataRoutes)
+app.use('/api', matchPostRoutes)
 app.use('/api/auth', authRoutes)
 
 app.use('/api', (_req, res) => {
