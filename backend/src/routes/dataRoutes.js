@@ -197,6 +197,7 @@ const buildVenueFromOwnerUser = user => {
     ownerEmail: norm(user.email).toLowerCase(),
     contactPhone: norm(ownerProfile.phone),
     operatingHours: parseOperatingHours(ownerProfile),
+    status: 'pending',
     createdAt: user.updatedAt || user.createdAt || new Date(),
   }
 }
@@ -762,11 +763,28 @@ router.post('/venues', async (req, res) => {
 
 router.patch('/venues/:id', async (req, res) => {
   try {
-    const venue = await Venue.findByIdAndUpdate(
+    let venue = await Venue.findByIdAndUpdate(
       req.params.id,
       { $set: req.body },
       { new: true, runValidators: true }
     )
+
+    if (!venue) {
+      // This id may belong to an owner account whose venue only exists as a
+      // "virtual" record derived from their profile (see buildVenueFromOwnerUser
+      // in GET /venues) - it has never actually been saved as a Venue document.
+      // In that case, create the real Venue document now instead of failing,
+      // so admin actions like "Approve" work the first time they're used.
+      const ownerUser = await User.findById(req.params.id)
+      if (ownerUser && ownerUser.role === 'owner' && ownerUser.ownerProfile?.venueName) {
+        const { filter, update } = buildVenueFromOwnerProfile(ownerUser, ownerUser.ownerProfile)
+        venue = await Venue.findOneAndUpdate(
+          filter,
+          { $set: { ...update, ...req.body } },
+          { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+        )
+      }
+    }
 
     if (!venue) {
       return res.status(404).json({ message: 'Venue not found.' })
@@ -845,6 +863,28 @@ router.get('/users/:id', async (req, res) => {
     return res.json(user)
   } catch (error) {
     return res.status(500).json({ message: 'Failed to fetch user.', error: error.message })
+  }
+})
+// Simple admin action: activate / deactivate / suspend a user account.
+router.patch('/users/:id/status', async (req, res) => {
+  try {
+    const status = String(req.body?.status || '').trim().toLowerCase()
+    if (!['active', 'inactive', 'suspended'].includes(status)) {
+      return res.status(400).json({ message: 'status must be active, inactive, or suspended.' })
+    }
+
+    const user = await User.findById(req.params.id)
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' })
+    }
+
+    user.status = status
+    await user.save()
+
+    const { password: _password, ...safeUser } = user.toObject()
+    return res.json({ message: 'User status updated.', user: safeUser })
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to update user status.', error: error.message })
   }
 })
 

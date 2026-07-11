@@ -1,15 +1,10 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
-import { futsalPartners as init, users as mockUsers } from '../../data/mockData.js'
-import { useEffect } from 'react'
 import { fetchApiJson } from '../../utils/apiClient.js'
-import { getApiBaseUrl } from '../../utils/apiConfig.js'
 
-const API_BASE = getApiBaseUrl()
-
-const mapVenueToPartner = (venue, index) => ({
-  id: venue.id || venue._id || `venue-${index + 1}`,
+const mapVenue = (venue) => ({
+  id: venue._id || venue.id,
   name: venue.name,
   owner: venue.owner || 'Unknown',
   location: venue.location,
@@ -20,29 +15,13 @@ const mapVenueToPartner = (venue, index) => ({
 })
 
 export default function Futsals() {
-  const [list,   setList]   = useState(init)
-  const [modal,  setModal]  = useState(false)
-  const [detail, setDetail] = useState(null)
-  const [toast,  setToast]  = useState('')
-  const [form,   setForm]   = useState({ name:'', owner:'', location:'', courts:'1' })
-
-  const [ownerOptions, setOwnerOptions] = React.useState(() => mockUsers.filter(u => u.role && u.role.toLowerCase().includes('owner')))
-
-  useEffect(() => {
-    let mounted = true
-    const loadOwners = async () => {
-      try {
-        const { response, data } = await fetchApiJson('/users?role=owner')
-        if (response.ok && mounted && Array.isArray(data)) {
-          setOwnerOptions(data.map(u => ({ id: u._id || u.id, name: u.name, email: u.email })))
-        }
-      } catch (_e) {
-        // ignore and keep mock owners
-      }
-    }
-    loadOwners()
-    return () => { mounted = false }
-  }, [])
+  const [list,        setList]        = useState([])
+  const [loading,     setLoading]     = useState(true)
+  const [ownerOptions, setOwnerOptions] = useState([])
+  const [modal,       setModal]       = useState(false)
+  const [detail,      setDetail]      = useState(null)
+  const [toast,       setToast]       = useState('')
+  const [form,        setForm]        = useState({ name:'', owner:'', location:'', courts:'1' })
 
   const toast$ = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
@@ -52,16 +31,29 @@ export default function Futsals() {
     const loadVenues = async () => {
       try {
         const { response, data } = await fetchApiJson('/venues')
-        if (!mounted || !response.ok || !Array.isArray(data)) return
+        if (mounted && response.ok && Array.isArray(data)) {
+          setList(data.map(mapVenue))
+        }
+      } catch (_error) {
+        // Leave list as-is if the fetch fails momentarily.
+      } finally {
+        if (mounted) setLoading(false)
+      }
+    }
 
-        const mapped = data.map(mapVenueToPartner)
-        setList(mapped.length > 0 ? mapped : init)
-      } catch (_e) {
-        if (mounted) setList(init)
+    const loadOwners = async () => {
+      try {
+        const { response, data } = await fetchApiJson('/users?role=owner')
+        if (mounted && response.ok && Array.isArray(data)) {
+          setOwnerOptions(data.map(u => ({ id: u._id, name: u.name, email: u.email })))
+        }
+      } catch (_error) {
+        // Owner dropdown just stays empty if this fails.
       }
     }
 
     loadVenues()
+    loadOwners()
     const intervalId = setInterval(loadVenues, 5000)
 
     return () => {
@@ -70,65 +62,66 @@ export default function Futsals() {
     }
   }, [])
 
-  const approve = id => {
-    setList(l => l.map(p => p.id===id ? {...p, status:'approved'} : p))
-    fetchApiJson(`/venues/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'approved' }),
-    }).catch(() => {})
-    toast$('✅ Partner approved!')
+  const approve = async (id) => {
+    setList(l => l.map(p => p.id === id ? { ...p, status: 'approved' } : p))
+    try {
+      await fetchApiJson(`/venues/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'approved' }),
+      })
+      toast$('✅ Partner approved!')
+    } catch (_error) {
+      toast$('Unable to approve right now. Please check your connection.')
+    }
   }
 
   const remove = async (id) => {
     const confirmed = window.confirm('Delete this futsal partner?')
     if (!confirmed) return
 
-    setList(prev => prev.filter(item => String(item.id) !== String(id)))
+    setList(prev => prev.filter(item => item.id !== id))
     try {
       await fetchApiJson(`/venues/${id}`, { method: 'DELETE' })
-    } catch (_e) {
-      // local removal already happened; next refresh will reconcile
+      toast$('🗑️ Partner removed!')
+    } catch (_error) {
+      toast$('Unable to remove right now. Please check your connection.')
     }
-    toast$('🗑️ Partner removed!')
   }
 
   const add = async () => {
     if (!form.name || !form.owner || !form.location) return
 
-    // try to persist to backend; fall back to local mock list
-    try {
-      const ownerObj = ownerOptions.find(o => o.name === form.owner) || {}
-      const body = {
-        name: form.name,
-        location: form.location,
-        rating: 4.5,
-        price: 'Rs. 1,200/hr',
-        type: 'Indoor',
-        courts: Number(form.courts) || 1,
-        pricePerHour: 1200,
-        owner: ownerObj.name || form.owner,
-        ownerEmail: ownerObj.email || ''
-      }
+    const ownerObj = ownerOptions.find(o => o.name === form.owner) || {}
 
+    try {
       const { response, data } = await fetchApiJson('/venues', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          name: form.name,
+          location: form.location,
+          rating: 4.5,
+          price: 'Rs. 1,200/hr',
+          type: 'Indoor',
+          courts: Number(form.courts) || 1,
+          pricePerHour: 1200,
+          owner: ownerObj.name || form.owner,
+          ownerEmail: ownerObj.email || '',
+        }),
       })
 
       if (response.ok && data?.venue) {
-        const v = data.venue
-        setList(prev => [...prev, { id: prev.length + 1, name: v.name, owner: v.owner || body.owner, location: v.location, courts: v.courts || body.courts, status: 'pending', joined: new Date().toISOString().split('T')[0], bookings: 0 }])
+        setList(prev => [...prev, mapVenue(data.venue)])
+        setModal(false)
+        setForm({ name:'', owner:'', location:'', courts:'1' })
+        toast$('✅ New partner added!')
       } else {
-        setList(prev => [...prev, { id: prev.length + 1, ...form, courts: +form.courts, status: 'pending', joined: new Date().toISOString().split('T')[0], bookings: 0 }])
+        toast$(data?.message || 'Unable to add that partner right now.')
       }
-    } catch (_e) {
-      setList(prev => [...prev, { id: prev.length + 1, ...form, courts: +form.courts, status: 'pending', joined: new Date().toISOString().split('T')[0], bookings: 0 }])
+    } catch (_error) {
+      toast$('Unable to add that partner right now. Please check your connection.')
     }
-
-    setModal(false); setForm({ name: '', owner: '', location: '', courts: '1' })
-    toast$('✅ New partner added!')
   }
 
   return (
@@ -149,66 +142,71 @@ export default function Futsals() {
           {/* Stats */}
           <div className="stats-row anim-2" style={{ gridTemplateColumns:'repeat(3,1fr)' }}>
             {[
-              { lbl:'Total Partners', cls:'si-blue',   v: list.length },
-              { lbl:'Approved',       cls:'si-green',  v: list.filter(p=>p.status==='approved').length },
-              { lbl:'Pending Review', cls:'si-orange', v: list.filter(p=>p.status==='pending').length },
+              { lbl:'Total Partners', v: list.length },
+              { lbl:'Approved',       v: list.filter(p => p.status === 'approved').length },
+              { lbl:'Pending Review', v: list.filter(p => p.status === 'pending').length },
             ].map(s => (
               <div className="stat-card" key={s.lbl}>
-                <div className={`stat-icon ${s.cls}`}><i className="fas fa-building" /></div>
-                <div><div className="stat-val">{s.v}</div><div className="stat-label">{s.lbl}</div></div>
+                <div className="stat-icon si-blue"><i className="fas fa-building" /></div>
+                <div><div className="stat-val">{loading ? '—' : s.v}</div><div className="stat-label">{s.lbl}</div></div>
               </div>
             ))}
           </div>
 
           {/* Cards */}
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(290px,1fr))', gap:18 }} className="anim-3">
-            {list.map((p, i) => (
-              <div key={p.id} className="card" style={{ transition:'var(--transition)' }}
-                onMouseEnter={e => e.currentTarget.style.boxShadow='var(--shadow-md)'}
-                onMouseLeave={e => e.currentTarget.style.boxShadow=''}>
-                <div style={{ padding:'20px 20px 14px', borderBottom:'1px solid var(--border)' }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:12 }}>
-                    <div style={{ width:48, height:48, borderRadius:13, background: p.status==='approved'?'var(--green-light)':'var(--yellow-light)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22 }}>
-                      🏟️
+          {list.length === 0 ? (
+            <div className="empty-state">
+              <i className="fas fa-building" />
+              <h3>{loading ? 'Loading venues…' : 'No futsal partners yet'}</h3>
+            </div>
+          ) : (
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(290px,1fr))', gap:18 }} className="anim-3">
+              {list.map((p, i) => (
+                <div key={p.id} className="card">
+                  <div style={{ padding:'20px 20px 14px', borderBottom:'1px solid var(--border)' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:12 }}>
+                      <div style={{ width:48, height:48, borderRadius:13, background: p.status === 'approved' ? 'var(--green-light)' : 'var(--yellow-light)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22 }}>
+                        🏟️
+                      </div>
+                      <span className={`badge badge-${p.status === 'approved' ? 'success' : 'warning'}`}>{p.status}</span>
                     </div>
-                    <span className={`badge badge-${p.status==='approved'?'success':'warning'}`}>{p.status}</span>
-                  </div>
-                  <div style={{ fontFamily:'Barlow Condensed,sans-serif', fontWeight:900, fontSize:17 }}>{p.name}</div>
-                  <div style={{ fontSize:12, color:'#8a96a8', marginTop:4, display:'flex', alignItems:'center', gap:5 }}>
-                    <i className="fas fa-location-dot" style={{ color:'var(--green)' }} />{p.location}
-                  </div>
-                </div>
-                <div style={{ padding:'12px 20px' }}>
-                  {[
-                    { lbl:'Owner',    val: p.owner,    icon:'fa-user-tie' },
-                    { lbl:'Courts',   val: p.courts,   icon:'fa-table-tennis-paddle-ball' },
-                    { lbl:'Bookings', val: p.bookings, icon:'fa-clipboard-list' },
-                    { lbl:'Since',    val: p.joined,   icon:'fa-calendar' },
-                  ].map(r => (
-                    <div key={r.lbl} style={{ display:'flex', justifyContent:'space-between', padding:'7px 0', borderBottom:'1px solid #f8fafc' }}>
-                      <span style={{ fontSize:11, color:'#8a96a8', fontWeight:700, textTransform:'uppercase', display:'flex', alignItems:'center', gap:6 }}>
-                        <i className={`fas ${r.icon}`} style={{ color:'var(--blue)', width:12 }} />{r.lbl}
-                      </span>
-                      <span style={{ fontSize:13, fontWeight:700 }}>{r.val}</span>
+                    <div style={{ fontFamily:'Barlow Condensed,sans-serif', fontWeight:900, fontSize:17 }}>{p.name}</div>
+                    <div style={{ fontSize:12, color:'#8a96a8', marginTop:4, display:'flex', alignItems:'center', gap:5 }}>
+                      <i className="fas fa-location-dot" style={{ color:'var(--green)' }} />{p.location}
                     </div>
-                  ))}
-                </div>
-                <div style={{ padding:'12px 20px', borderTop:'1px solid var(--border)', display:'flex', gap:8 }}>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setDetail(p)} style={{ flex:1 }}>
-                    <i className="fas fa-eye" /> Details
-                  </button>
-                  {p.status==='pending' && (
-                    <button className="btn btn-primary btn-sm" style={{ flex:1 }} onClick={() => approve(p.id)}>
-                      <i className="fas fa-check" /> Approve
+                  </div>
+                  <div style={{ padding:'12px 20px' }}>
+                    {[
+                      { lbl:'Owner',    val: p.owner,    icon:'fa-user-tie' },
+                      { lbl:'Courts',   val: p.courts,   icon:'fa-table-tennis-paddle-ball' },
+                      { lbl:'Bookings', val: p.bookings, icon:'fa-clipboard-list' },
+                      { lbl:'Since',    val: p.joined,   icon:'fa-calendar' },
+                    ].map(r => (
+                      <div key={r.lbl} style={{ display:'flex', justifyContent:'space-between', padding:'7px 0', borderBottom:'1px solid #f8fafc' }}>
+                        <span style={{ fontSize:11, color:'#8a96a8', fontWeight:700, textTransform:'uppercase', display:'flex', alignItems:'center', gap:6 }}>
+                          <i className={`fas ${r.icon}`} style={{ color:'var(--blue)', width:12 }} />{r.lbl}
+                        </span>
+                        <span style={{ fontSize:13, fontWeight:700 }}>{r.val}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ padding:'12px 20px', borderTop:'1px solid var(--border)', display:'flex', gap:8 }}>
+                    <button className="btn btn-ghost btn-sm" onClick={() => setDetail(p)} style={{ flex:1 }}>
+                      <i className="fas fa-eye" /> Details
                     </button>
-                  )}
-                  <button className="btn btn-outline btn-sm" onClick={() => remove(p.id)}>
-                    <i className="fas fa-trash" /> Delete
-                  </button>
+                    {p.status === 'pending' && (
+                      <button className="btn btn-primary btn-sm" style={{ flex:1 }} onClick={() => approve(p.id)}>
+                        <i className="fas fa-check" /> Approve
+                      </button>
+                    )}
+                    <button className="btn btn-outline btn-sm" onClick={() => remove(p.id)}>
+                      <i className="fas fa-trash" /> Delete
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -237,7 +235,7 @@ export default function Futsals() {
               <select className="form-control" value={form.owner} onChange={e => setForm({...form, owner:e.target.value})}>
                 <option value="">-- Select owner --</option>
                 {ownerOptions.map(o => (
-                  <option key={o.id} value={o.name}>{o.name} {o.email?`(${o.email})`:''}</option>
+                  <option key={o.id} value={o.name}>{o.name} {o.email ? `(${o.email})` : ''}</option>
                 ))}
               </select>
             </div>
@@ -275,7 +273,7 @@ export default function Futsals() {
               </div>
             ))}
             <div style={{ display:'flex', gap:10, marginTop:20 }}>
-              {detail.status==='pending' && (
+              {detail.status === 'pending' && (
                 <button className="btn btn-primary" style={{ flex:1 }} onClick={() => { approve(detail.id); setDetail(null) }}>
                   <i className="fas fa-check" /> Approve Partner
                 </button>

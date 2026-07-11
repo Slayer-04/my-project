@@ -31,8 +31,13 @@ const VenueSchema = new mongoose.Schema(
       close: { type: String, default: '22:00' },
     },
     owner: { type: String, default: '', trim: true },
-    ownerEmail: { type: String, default: '', trim: true },
-    contactPhone: { type: String, default: '', trim: true },
+      ownerEmail: { type: String, default: '', trim: true },
+      contactPhone: { type: String, default: '', trim: true },
+      status: {
+        type: String,
+        enum: ['pending', 'approved'],
+        default: 'pending',
+      },
     amenities: [{ type: String }],
     availability: {
       monday: { type: Boolean, default: true },

@@ -31,8 +31,15 @@ app.use(cors())
 app.use(express.json())
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'fotmatch-backend' })
+  res.json({
+    ok: true,
+    service: 'fotmatch-backend',
+    dbConnected: mongoose.connection.readyState === 1,
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  })
 })
+
 
 app.use('/api/teams', teamRoutes)
 app.use('/api/team-joins', teamJoinRoutes)
