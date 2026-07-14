@@ -17,13 +17,18 @@ const mapBookingFromApi = booking => ({
   id: booking.id || booking._id,
   venue: booking.venueId?.name || booking.venue,
 })
-
 const parseAmount = amount => {
   if (typeof amount === 'number') return Number.isFinite(amount) ? amount : 0
   if (typeof amount !== 'string') return 0
-  const numeric = Number(amount.replace(/[^\d.]/g, ''))
+  // Amounts are always whole rupees in this app, formatted like "Rs. 1,200" -
+  // strip every non-digit character (including the period after "Rs" and the
+  // thousands comma), not just non-digit-non-period, or "Rs. 1,200" parses as
+  // ".1200" (0.12) instead of 1200.
+  const digitsOnly = amount.replace(/[^\d]/g, '')
+  const numeric = Number(digitsOnly)
   return Number.isFinite(numeric) ? numeric : 0
 }
+
 
 const isSameDay = (left, right) => (
   left.getFullYear() === right.getFullYear()
@@ -40,6 +45,59 @@ const weekStartMonday = date => {
 }
 
 const formatCurrency = value => `Rs. ${Math.round(value).toLocaleString('en-IN')}`
+const parseTimeToMinutesForExpiry = (timeValue) => {
+  if (!timeValue) return null
+  const text = String(timeValue).trim()
+  const is12Hour = /\b(AM|PM)\b/i.test(text)
+
+  if (is12Hour) {
+    const [timePart, meridiemRaw] = text.split(' ')
+    if (!timePart || !meridiemRaw) return null
+    const [hourRaw, minuteRaw] = timePart.split(':')
+    let hour = Number(hourRaw)
+    const minute = Number(minuteRaw)
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+    const meridiem = meridiemRaw.toUpperCase()
+    if (meridiem === 'PM' && hour !== 12) hour += 12
+    if (meridiem === 'AM' && hour === 12) hour = 0
+    return (hour * 60) + minute
+  }
+
+  const [hourRaw, minuteRaw] = text.split(':')
+  const hour = Number(hourRaw)
+  const minute = Number(minuteRaw)
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+  return (hour * 60) + minute
+}
+
+const parseDateToYMDForExpiry = (dateValue) => {
+  if (!dateValue) return ''
+  const text = String(dateValue).trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text
+  const d = new Date(text)
+  if (Number.isNaN(d.getTime())) return text
+  return d.toISOString().split('T')[0]
+}
+
+// A pending request whose slot time has already passed can no longer be
+// accepted or declined - it should stop counting toward "Pending Approvals".
+const isBookingSlotExpired = (booking) => {
+  if (!booking?.date || !booking?.time) return false
+
+  const ymd = parseDateToYMDForExpiry(booking.date)
+  const minutesStart = parseTimeToMinutesForExpiry(booking.time)
+  if (!ymd || minutesStart === null) return false
+
+  const slotEndMinutes = minutesStart + 60 // slots are 1 hour in this app
+  const [year, month, day] = ymd.split('-').map(Number)
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return false
+
+  const endHours24 = Math.floor(slotEndMinutes / 60)
+  const endMinutes = slotEndMinutes % 60
+  const endDate = new Date(year, month - 1, day, endHours24, endMinutes, 0, 0)
+
+  return endDate.getTime() <= Date.now()
+}
 
 export default function OwnerDashboard() {
   const { user, bookings }  = useAuth()
@@ -109,8 +167,8 @@ export default function OwnerDashboard() {
     return d
   }, [])
 
-  const confirmed = ownerBookings.filter(b => b.status==='confirmed').length
-  const pending = ownerBookings.filter(b => b.status==='pending').length
+ const confirmed = ownerBookings.filter(b => b.status==='confirmed').length
+  const pending = ownerBookings.filter(b => b.status==='pending' && !isBookingSlotExpired(b)).length
   const todaysConfirmed = ownerBookings.filter(b => {
     if (b.status !== 'confirmed' || !b.date) return false
     const bookingDate = new Date(b.date)

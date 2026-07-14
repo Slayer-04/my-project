@@ -59,7 +59,7 @@ export default function Bookings() {
     const unsubscribeCreate = onBookingCreated((bookingData) => {
       console.log('[Bookings] Received booking:created event:', bookingData)
 
-      if (ownerVenueName && bookingData.venue !== ownerVenueName) {
+      if (ownerVenueName && !venueMatches(bookingData.venue, ownerVenueName)) {
         return
       }
       
@@ -100,7 +100,18 @@ export default function Bookings() {
     }
   }, [ownerVenueName, setBookings])
 
-  const ownerBookings = bookings.filter(b => !ownerVenueName || b.venue === ownerVenueName)
+  const normalizeVenueKey = (value) => {
+    const raw = String(value || '').trim().toLowerCase()
+    // Some bookings store "Name - Location", others just "Name" - compare
+    // using just the name portion so both forms match the same venue.
+    return raw.includes(' - ') ? raw.split(' - ')[0].trim() : raw
+  }
+
+  const venueMatches = (bookingVenue, targetVenueName) => (
+    normalizeVenueKey(bookingVenue) === normalizeVenueKey(targetVenueName)
+  )
+
+  const ownerBookings = bookings.filter(b => !ownerVenueName || venueMatches(b.venue, ownerVenueName))
 
   const parseTimeToMinutesOwner = (timeValue) => {
     if (!timeValue) return null
@@ -140,6 +151,19 @@ export default function Bookings() {
     return d.toISOString().split('T')[0]
   }
 
+  const getBookingTimestamp = (booking) => {
+    const ymd = parseDateToYMD(booking?.date)
+    const minutes = parseTimeToMinutesOwner(booking?.time)
+    if (!ymd || minutes === null) return Number.MAX_SAFE_INTEGER
+
+    const [year, month, day] = ymd.split('-').map(Number)
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return Number.MAX_SAFE_INTEGER
+
+    const hours = Math.floor(minutes / 60)
+    const mins = minutes % 60
+    return new Date(year, month - 1, day, hours, mins, 0, 0).getTime()
+  }
+
   const isBookingExpired = (booking) => {
     if (!booking?.date || !booking?.time) return false
 
@@ -167,7 +191,7 @@ export default function Bookings() {
     bookings.some(b => (
       b.status === 'confirmed'
       && b.id !== ignoreBookingId
-      && b.venue === targetBooking.venue
+      && venueMatches(b.venue, targetBooking.venue)
       && b.date === targetBooking.date
       && b.time === targetBooking.time
     ))
@@ -180,7 +204,7 @@ export default function Bookings() {
       return
     }
 
-    if (ownerVenueName && acceptedBooking.venue !== ownerVenueName) {
+    if (ownerVenueName && !venueMatches(acceptedBooking.venue, ownerVenueName)) {
       toast$('⛔ You can only accept bookings for your own futsal.')
       return
     }
@@ -231,7 +255,7 @@ export default function Bookings() {
 
   const declineBooking = async (notificationId, bookingId) => {
     const targetBooking = bookings.find(b => b.id === bookingId)
-    if (targetBooking && ownerVenueName && targetBooking.venue !== ownerVenueName) {
+    if (targetBooking && ownerVenueName && !venueMatches(targetBooking.venue, ownerVenueName)) {
       toast$('⛔ You can only decline bookings for your own futsal.')
       return
     }
@@ -268,7 +292,7 @@ export default function Bookings() {
       return
     }
 
-    if (ownerVenueName && confirmedBooking.venue !== ownerVenueName) {
+    if (ownerVenueName && !venueMatches(confirmedBooking.venue, ownerVenueName)) {
       toast$('⛔ You can only confirm bookings for your own futsal.')
       return
     }
@@ -301,7 +325,7 @@ export default function Bookings() {
   }
   const cancel = async id => {
     const targetBooking = bookings.find(b => b.id === id)
-    if (targetBooking && ownerVenueName && targetBooking.venue !== ownerVenueName) {
+    if (targetBooking && ownerVenueName && !venueMatches(targetBooking.venue, ownerVenueName)) {
       toast$('⛔ You can only cancel bookings for your own futsal.')
       return
     }
@@ -328,8 +352,23 @@ export default function Bookings() {
     setDetail(null)
   }
 
-  const filtered = nonExpiredBookings.filter(b => filter==='All' || b.status===filter.toLowerCase())
-  
+  // The table shows ALL bookings (all time), not just upcoming ones - only the
+  // "Pending Approvals" count above needs to exclude expired slots, since those
+  // can no longer be accepted/declined. Sort upcoming/current bookings first
+  // (soonest first), then past bookings below (most recent first).
+
+  const filtered = ownerBookings
+    .filter(b => !(b.status === 'pending' && isBookingExpired(b)))
+    .filter(b => filter==='All' || b.status===filter.toLowerCase())
+    .slice()
+    .sort((a, b) => {
+      const aExpired = isBookingExpired(a)
+      const bExpired = isBookingExpired(b)
+      if (aExpired !== bExpired) return aExpired ? 1 : -1
+      return aExpired
+        ? getBookingTimestamp(b) - getBookingTimestamp(a)  // past: most recent first
+        : getBookingTimestamp(a) - getBookingTimestamp(b)  // upcoming: soonest first
+    })
   // Build pending requests from server-backed bookings so owners can always act.
   const pendingRequests = nonExpiredBookings
     .filter(booking => booking.status === 'pending')
@@ -366,7 +405,7 @@ export default function Bookings() {
             {[
               { lbl:'Total',     cls:'si-blue',   icon:'fa-clipboard-list', v: ownerBookings.length },
               { lbl:'Confirmed', cls:'si-green',  icon:'fa-check-circle',   v: ownerBookings.filter(b=>b.status==='confirmed').length },
-              { lbl:'Pending',   cls:'si-orange', icon:'fa-clock',          v: ownerBookings.filter(b=>b.status==='pending').length },
+              { lbl:'Pending',   cls:'si-orange', icon:'fa-clock',          v: nonExpiredBookings.filter(b=>b.status==='pending').length },
             ].map(s => (
               <div className="stat-card" key={s.lbl}>
                 <div className={`stat-icon ${s.cls}`}><i className={`fas ${s.icon}`} /></div>
