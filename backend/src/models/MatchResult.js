@@ -20,4 +20,10 @@ const MatchResultSchema = new mongoose.Schema(
   { timestamps: true }
 )
 
+// Prevent the same team from having more than one result recorded for the
+// same booking. Without this, a resubmission (e.g. triggered by the frontend
+// re-prompting for a score it had already saved) creates a duplicate document
+// and double-applies the ELO/win-loss update for that match.
+MatchResultSchema.index({ bookingId: 1, team: 1 }, { unique: true })
+
 module.exports = mongoose.model('MatchResult', MatchResultSchema)

@@ -313,6 +313,43 @@ export const removeListener = (eventName) => {
 }
 
 /**
+ * Emit match post removed event (deleted by its poster, accepted, or expired).
+ * Broadcasting this means every OTHER team's Find Match screen drops the post
+ * immediately instead of waiting for its next poll cycle.
+ */
+export const emitMatchPostRemove = (postId) => {
+  if (!socket) {
+    console.warn('[Socket] Socket not connected, skipping matchPost:remove emit')
+    return
+  }
+
+  socket.emit('matchPost:remove', { postId })
+  console.log('[Socket] Emitted matchPost:remove', postId)
+}
+
+/**
+ * Listen for match post removed event.
+ * Returns unsubscribe function to remove listener
+ */
+export const onMatchPostRemoved = (callback) => {
+  if (!socket) {
+    console.warn('[Socket] Socket not connected, skipping onMatchPostRemoved listener')
+    return () => {}
+  }
+
+  const handler = (data) => {
+    console.log('[Socket] Received matchPost:removed', data)
+    callback(data)
+  }
+
+  socket.on('matchPost:removed', handler)
+
+  return () => {
+    socket.off('matchPost:removed', handler)
+  }
+}
+
+/**
  * Remove all listeners
  */
 export const removeAllListeners = () => {

@@ -19,8 +19,29 @@ export default function TeamDashboard() {
   const navigate = useNavigate()
   const [scoreModalOpen, setScoreModalOpen] = useState(false)
   const [selectedMatch, setSelectedMatch] = useState(null)
-  // Track bookings the user has dismissed so we don't re-open them automatically
-  const dismissedMatchIds = React.useRef(new Set())
+  // Track bookings the user has dismissed so we don't re-open them automatically.
+  // Persisted to sessionStorage (not just a ref) so navigating to another route
+  // and back, or reloading the page, doesn't forget a dismissal and re-pop the
+  // same unscored match repeatedly within the same browser tab session.
+  const dismissedMatchIds = React.useRef((() => {
+    try {
+      const stored = sessionStorage.getItem('fotmatch-dismissed-score-modals')
+      return new Set(stored ? JSON.parse(stored) : [])
+    } catch (_error) {
+      return new Set()
+    }
+  })())
+
+  const persistDismissedMatchIds = () => {
+    try {
+      sessionStorage.setItem(
+        'fotmatch-dismissed-score-modals',
+        JSON.stringify([...dismissedMatchIds.current])
+      )
+    } catch (_error) {
+      // Ignore storage failures; dismissal just won't survive a reload.
+    }
+  }
   const [showAllUpcoming, setShowAllUpcoming] = useState(false)
   const [showAllMatches, setShowAllMatches] = useState(false)
   const teamAliases = [
@@ -174,6 +195,54 @@ export default function TeamDashboard() {
       window.removeEventListener('focus', handleFocus)
     }
   }, [myTeamName, setBookings, user?.role])
+
+  // Load match results already saved on the server. Without this, the "has this
+  // match been scored?" check below only ever sees whatever is in this browser's
+  // localStorage, so a score saved from another device/session (or before local
+  // storage was cleared) would be invisible here and the popup would re-appear
+  // for a match that was already scored.
+  useEffect(() => {
+    if (user?.role !== 'team' || !myTeamName) return
+
+    let active = true
+
+    const loadMatchResults = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/match-results`)
+        if (!response.ok) return
+
+        const data = await response.json()
+        if (!active || !Array.isArray(data)) return
+
+        const mine = data
+          .filter(r => String(r.team || '').trim() === myTeamName)
+          .map(r => ({ ...r, bookingId: r.bookingId, id: r.id || r._id }))
+
+        setMatchResults(prev => {
+          const existingKeys = new Set(
+            prev.map(r => `${String(r.bookingId)}|${String(r.team || '').trim()}`)
+          )
+          const missing = mine.filter(
+            r => !existingKeys.has(`${String(r.bookingId)}|${String(r.team || '').trim()}`)
+          )
+          if (missing.length === 0) return prev
+          return [...prev, ...missing]
+        })
+      } catch (_error) {
+        // Keep whatever we already have locally if the server is unavailable.
+      }
+    }
+
+    loadMatchResults()
+    const intervalId = setInterval(loadMatchResults, 5000)
+    window.addEventListener('focus', loadMatchResults)
+
+    return () => {
+      active = false
+      clearInterval(intervalId)
+      window.removeEventListener('focus', loadMatchResults)
+    }
+  }, [myTeamName, setMatchResults, user?.role])
 
   useEffect(() => {
     if (!Array.isArray(matchPosts) || matchPosts.length === 0) return
@@ -668,7 +737,10 @@ export default function TeamDashboard() {
           myTeamName={myTeamName}
           onSubmit={handleScoreSubmit}
           onClose={() => {
-            if (selectedMatch) dismissedMatchIds.current.add(String(selectedMatch.id))
+            if (selectedMatch) {
+              dismissedMatchIds.current.add(String(selectedMatch.id))
+              persistDismissedMatchIds()
+            }
             setScoreModalOpen(false)
             setSelectedMatch(null)
           }}

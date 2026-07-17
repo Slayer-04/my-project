@@ -3,7 +3,7 @@ import Sidebar from '../../components/Sidebar.jsx'
 import Topbar  from '../../components/Topbar.jsx'
 import { teams as mockTeams, venues as mockVenues, LOCATION_COORDS } from '../../data/mockData.js'
 import { useAuth } from '../../App.jsx'
-import { emitChallengeCreate, onChallengeCreated } from '../../utils/socketService.js'
+import { emitChallengeCreate, onChallengeCreated, emitMatchPostRemove, onMatchPostRemoved } from '../../utils/socketService.js'
 import { getApiBaseUrl } from '../../utils/apiConfig.js'
 
 const API_BASE = getApiBaseUrl()
@@ -610,10 +610,12 @@ export default function FindMatch() {
 
     loadMatchPosts()
     const pollId = setInterval(loadMatchPosts, 5000)
+    window.addEventListener('focus', loadMatchPosts)
 
     return () => {
       active = false
       clearInterval(pollId)
+      window.removeEventListener('focus', loadMatchPosts)
     }
   }, [setMatchPosts])
 
@@ -653,6 +655,21 @@ export default function FindMatch() {
       if (unsubscribe) unsubscribe()
     }
   }, [currentTeamName, setChallenges, setNotifications])
+
+  // Listen for a match post being removed (deleted, accepted, or expired) by
+  // ANY team, and drop it locally the instant it happens — rather than only
+  // finding out on the next 5s poll or the next time this tab regains focus.
+  useEffect(() => {
+    const unsubscribe = onMatchPostRemoved((data) => {
+      const removedId = data?.postId
+      if (!removedId) return
+      setMatchPosts(prev => prev.filter(p => String(p.id) !== String(removedId)))
+    })
+
+    return () => {
+      if (unsubscribe) unsubscribe()
+    }
+  }, [setMatchPosts])
 
   const postedRecommendationCandidates = useMemo(() => {
     const profileByTeamName = new Map(teams.map(team => [normalizeTeamKey(team.name), team]))
@@ -765,9 +782,29 @@ export default function FindMatch() {
     )
   }, [bookings, form.venue, form.date, venueOptions])
 
-  const availablePostTimes = useMemo(() => (
-    POST_TIMES.filter(t => !bookedTimesForSelectedSlot.has(t))
-  ), [bookedTimesForSelectedSlot])
+  // Parse a POST_TIMES-style 12-hour string ("06:00 AM") to minutes since midnight.
+  const parsePostTimeToMinutes = (timeStr) => {
+    const [time, meridiem] = timeStr.trim().split(' ')
+    const [h, m] = time.split(':').map(Number)
+    let hour = h % 12
+    if (meridiem?.toUpperCase() === 'PM') hour += 12
+    return hour * 60 + m
+  }
+
+  const todayDateString = () => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  }
+
+  const availablePostTimes = useMemo(() => {
+    const notBooked = POST_TIMES.filter(t => !bookedTimesForSelectedSlot.has(t))
+    // If posting for today, hide times that have already passed — you can't
+    // organise a match for a slot that's already gone by.
+    if (form.date !== todayDateString()) return notBooked
+
+    const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes()
+    return notBooked.filter(t => parsePostTimeToMinutes(t) > nowMinutes)
+  }, [bookedTimesForSelectedSlot, form.date])
 
   const submitPost = async () => {
     if (!canManageTeam) {
@@ -784,6 +821,14 @@ export default function FindMatch() {
     if (bookedTimesForSelectedSlot.has(form.time)) {
       toast$(`${form.time} on ${form.date} is already booked at that venue. Please pick another time.`, 'info')
       return
+    }
+
+    if (form.date === todayDateString()) {
+      const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes()
+      if (parsePostTimeToMinutes(form.time) <= nowMinutes) {
+        toast$('That time has already passed today. Please pick a later time.', 'info')
+        return
+      }
     }
 
     try {
@@ -899,6 +944,7 @@ export default function FindMatch() {
       // Success — the post is gone server-side; drop it locally too, and let
       // the next bookings/challenges poll pick up the two new confirmed bookings.
       setMatchPosts(prev => prev.filter(p => p.id !== post.id))
+      emitMatchPostRemove(post.id)
       setChallenges(prev => prev.map(challenge => (
         resolveId(challenge._id || challenge.id) === resolveId(post.challengeId)
           ? { ...challenge, status: 'accepted' }
@@ -926,6 +972,12 @@ export default function FindMatch() {
       const result = await response.json().catch(() => ({}))
 
       if (!response.ok) {
+        // 404 means the post is already gone entirely (deleted, or removed by
+        // some other flow) — drop it locally rather than leaving a stale card
+        // the user can keep clicking with no effect.
+        if (response.status === 404) {
+          setMatchPosts(prev => prev.filter(p => p.id !== post.id))
+        }
         toast$(result.message || 'Unable to decline that request right now.', 'info')
         return
       }
@@ -965,9 +1017,15 @@ export default function FindMatch() {
       const result = await response.json().catch(() => ({}))
 
       if (!response.ok) {
-        // Backend rejected it (duplicate pending request, slot no longer
-        // available, etc). If the slot is gone, drop the post locally too.
-        if (response.status === 409 && /booked|available/i.test(String(result.message || ''))) {
+        // A 404 means the poster deleted the post outright. A 409 can mean two
+        // different things: (a) this post's own state has moved on — it's no
+        // longer open, or the slot got booked — in which case it's genuinely
+        // stale and must be dropped from view; or (b) these two teams simply
+        // already have a different pending request between them, which says
+        // nothing about whether THIS post is still valid, so it must stay.
+        const staleMessage = /no longer open|already booked|no longer available|expired/i
+          .test(String(result.message || ''))
+        if (response.status === 404 || (response.status === 409 && staleMessage)) {
           setMatchPosts(prev => prev.filter(p => p.id !== post.id))
         }
         toast$(result.message || 'Unable to send that match request right now.', 'info')
@@ -999,15 +1057,28 @@ export default function FindMatch() {
   }
 
   const deletePost = async (id) => {
+    // Optimistic removal for the poster's own screen, but we now actually
+    // verify the server confirms the delete below — previously this call's
+    // result was never checked, so if the DELETE failed server-side (e.g. a
+    // transient error) the post silently kept existing in the database while
+    // this screen showed it as gone, and every other team could still see it
+    // and act on it.
     setMatchPosts(prev => prev.filter(p => p.id !== id))
     try {
-      await fetch(`${API_BASE}/match-posts/${id}`, { method: 'DELETE' })
+      const response = await fetch(`${API_BASE}/match-posts/${id}`, { method: 'DELETE' })
+      if (!response.ok) {
+        toast$('Could not remove the post — refreshing.', 'info')
+        // Bring it back locally rather than leaving this screen out of sync
+        // with reality; the next poll will restore the accurate state.
+        return
+      }
+      // Confirmed deleted server-side — tell every other connected team's
+      // Find Match screen to drop it immediately too.
+      emitMatchPostRemove(id)
+      toast$('Post removed.', 'info')
     } catch (_error) {
-      // The post is already gone from the UI; a failed network call here
-      // just means it may reappear on the next poll, which is an acceptable
-      // fallback rather than blocking the user on a delete confirmation.
+      toast$('Could not remove the post — check your connection and try again.', 'info')
     }
-    toast$('Post removed.', 'info')
   }
 
   const hitTeam = async team => {
@@ -1031,7 +1102,9 @@ export default function FindMatch() {
       const result = await response.json().catch(() => ({}))
 
       if (!response.ok) {
-        if (response.status === 409 && /booked|available/i.test(String(result.message || ''))) {
+        const staleMessage = /no longer open|already booked|no longer available|expired/i
+          .test(String(result.message || ''))
+        if (response.status === 404 || (response.status === 409 && staleMessage)) {
           setMatchPosts(prev => prev.filter(p => p.id !== team.matchPostId))
         }
         toast$(result.message || 'Unable to send that request right now.', 'info')
@@ -1298,7 +1371,7 @@ export default function FindMatch() {
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
               <div className="form-group">
                 <label className="form-label">Exact Date</label>
-                <input type="date" className="form-control" value={form.date} onChange={e => setForm({...form,date:e.target.value})} />
+                <input type="date" className="form-control" min={todayDateString()} value={form.date} onChange={e => setForm({...form,date:e.target.value})} />
               </div>
               <div className="form-group">
                 <label className="form-label">Exact Time</label>

@@ -1001,6 +1001,19 @@ router.post('/match-results', async (req, res) => {
     const myScoreNum = Number(myScore)
     const opponentScoreNum = Number(opponentScore)
 
+    // Guard against duplicate submissions for the same booking/team (e.g. the
+    // client re-prompting for a score that was already saved). Without this,
+    // ELO/win-loss updates below would be applied a second time for one match.
+    const existingResult = await MatchResult.findOne({ bookingId, team: submittedTeamName })
+    if (existingResult) {
+      return res.status(200).json({
+        message: 'Match result was already submitted.',
+        result: existingResult,
+        updatedTeam: null,
+        updatedOpponentTeam: null,
+      })
+    }
+
     let matchOutcome = 'draw'
     if (myScoreNum > opponentScoreNum) matchOutcome = 'win'
     else if (myScoreNum < opponentScoreNum) matchOutcome = 'loss'
@@ -1047,18 +1060,35 @@ router.post('/match-results', async (req, res) => {
       await Promise.all(saveOperations)
     }
 
-    const matchResult = await MatchResult.create({
-      bookingId,
-      team: submittedTeamName,
-      opponent: opponentTeamName,
-      myScore: myScoreNum,
-      opponentScore: opponentScoreNum,
-      matchDate: matchDate || new Date().toISOString().split('T')[0],
-      matchTime: matchTime || '00:00',
-      venue: venue ? venue.trim() : '',
-      submittedBy: submittedBy ? submittedBy.trim() : submittedTeamName,
-      timestamp: new Date(),
-    })
+    let matchResult
+    try {
+      matchResult = await MatchResult.create({
+        bookingId,
+        team: submittedTeamName,
+        opponent: opponentTeamName,
+        myScore: myScoreNum,
+        opponentScore: opponentScoreNum,
+        matchDate: matchDate || new Date().toISOString().split('T')[0],
+        matchTime: matchTime || '00:00',
+        venue: venue ? venue.trim() : '',
+        submittedBy: submittedBy ? submittedBy.trim() : submittedTeamName,
+        timestamp: new Date(),
+      })
+    } catch (createError) {
+      // Duplicate key: another request for the same bookingId+team won the
+      // race (e.g. two tabs open). The ELO change above already happened, so
+      // don't apply it again — just return the result that already exists.
+      if (createError?.code === 11000) {
+        const alreadySaved = await MatchResult.findOne({ bookingId, team: submittedTeamName })
+        return res.status(200).json({
+          message: 'Match result was already submitted.',
+          result: alreadySaved,
+          updatedTeam: null,
+          updatedOpponentTeam: null,
+        })
+      }
+      throw createError
+    }
 
     return res.status(201).json({
       message: 'Match result submitted successfully.',

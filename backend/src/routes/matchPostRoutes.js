@@ -88,6 +88,13 @@ router.post('/match-posts', async (req, res) => {
     const note = norm(req.body.note)
     const visibilityHours = Number(req.body.visibilityHours) || 24
 
+    // Reject a date/time that's already in the past. The client hides these
+    // from the picker, but that's just UI convenience — never trust it alone.
+    const parsedSlot = new Date(`${date} ${time}`)
+    if (!Number.isNaN(parsedSlot.getTime()) && parsedSlot.getTime() <= Date.now()) {
+      return res.status(400).json({ message: 'That date and time has already passed. Please choose a future slot.' })
+    }
+
     // Resolve to the venue's canonical name FIRST. Without this, a post
     // created against "Name - Location" (as typed in the autocomplete) would
     // never be recognised as the same venue as a booking stored under just

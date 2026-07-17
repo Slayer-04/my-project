@@ -129,6 +129,18 @@ io.on('connection', (socket) => {
     })
   })
 
+  // Handle match post removal (deleted by poster, accepted, or expired)
+  socket.on('matchPost:remove', (data) => {
+    console.log(`[WebSocket] Match post removed:`, data)
+
+    // Broadcast to ALL connected users so every open Find Match screen drops
+    // this post immediately instead of waiting for its next poll cycle.
+    io.emit('matchPost:removed', {
+      ...data,
+      timestamp: new Date(),
+    })
+  })
+
   // Handle challenge response (accept/decline)
   socket.on('challenge:respond', (responseData) => {
     console.log(`[WebSocket] Challenge response from ${responseData.respondedBy}:`, responseData)
